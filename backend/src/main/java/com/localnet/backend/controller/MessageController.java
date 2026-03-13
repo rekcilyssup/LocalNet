@@ -1,0 +1,50 @@
+package com.localnet.backend.controller;
+
+import com.localnet.backend.model.MessageView;
+import com.localnet.backend.model.SendMessageRequest;
+import com.localnet.backend.service.LocalNetService;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
+import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+
+import java.util.List;
+import java.util.Map;
+
+@RestController
+@RequestMapping("/api/messages")
+public class MessageController {
+
+    private final LocalNetService localNetService;
+
+    public MessageController(LocalNetService localNetService) {
+        this.localNetService = localNetService;
+    }
+
+    @GetMapping("/{peerId}")
+    public List<MessageView> getMessages(@PathVariable String peerId, @RequestParam String viewerPeerId) {
+        return localNetService.getMessages(viewerPeerId, peerId);
+    }
+
+    @PostMapping("/send")
+    public Map<String, Object> sendMessage(@RequestBody SendMessageRequest request) {
+        try {
+            String messageId = localNetService.sendMessage(request);
+            return Map.of("success", true, "messageId", messageId);
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
+        }
+    }
+
+    @DeleteMapping("/{id}")
+    public Map<String, Boolean> deleteMessage(@PathVariable String id) {
+        localNetService.deleteMessage(id);
+        return Map.of("success", true);
+    }
+}

@@ -22,7 +22,7 @@ type Message = {
 const AVATARS = ['🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🦄'];
 
 export default function App() {
-  const [myDevice, setMyDevice] = useState<{deviceName: string, avatar: string} | null>(null);
+  const [myDevice, setMyDevice] = useState<Peer | null>(null);
   const [peers, setPeers] = useState<Peer[]>([]);
   const [activePeer, setActivePeer] = useState<Peer | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -39,8 +39,7 @@ export default function App() {
       try {
         const res = await fetch('/api/peers');
         const data = await res.json();
-        // Filter out self if the backend returns it
-        setPeers(data.filter((p: Peer) => p.deviceName !== myDevice.deviceName));
+        setPeers(data.filter((p: Peer) => p.peerId !== myDevice.peerId));
       } catch (e) {
         console.error("Failed to fetch peers", e);
       }
@@ -52,10 +51,10 @@ export default function App() {
 
   // Polling for messages
   useEffect(() => {
-    if (!activePeer) return;
+    if (!activePeer || !myDevice) return;
     const fetchMessages = async () => {
       try {
-        const res = await fetch(`/api/messages/${activePeer.peerId}`);
+        const res = await fetch(`/api/messages/${activePeer.peerId}?viewerPeerId=${myDevice.peerId}`);
         const data = await res.json();
         setMessages(data);
       } catch (e) {
@@ -65,7 +64,7 @@ export default function App() {
     fetchMessages();
     const interval = setInterval(fetchMessages, 2000);
     return () => clearInterval(interval);
-  }, [activePeer]);
+  }, [activePeer, myDevice]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -73,12 +72,12 @@ export default function App() {
 
   const handleJoin = async (deviceName: string, avatar: string) => {
     try {
-      await fetch('/api/peers/broadcast', {
+      const res = await fetch('/api/peers/broadcast', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceName, avatar })
       });
-      setMyDevice({ deviceName, avatar });
+      setMyDevice(await res.json());
     } catch (e) {
       console.error("Failed to broadcast presence", e);
     }
@@ -86,7 +85,7 @@ export default function App() {
 
   const handleSendMessage = async (e?: React.FormEvent) => {
     e?.preventDefault();
-    if (!activePeer || (!inputText.trim() && !selectedFile)) return;
+    if (!activePeer || !myDevice || (!inputText.trim() && !selectedFile)) return;
 
     let fileId;
     let fileName;
@@ -119,6 +118,8 @@ export default function App() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
+          senderPeerId: myDevice.peerId,
+          targetPeerId: activePeer.peerId,
           targetIp: activePeer.ipAddress,
           text: inputText,
           ttlSeconds,
@@ -131,7 +132,7 @@ export default function App() {
       setSelectedFile(null);
       
       // Optimistic fetch
-      const res = await fetch(`/api/messages/${activePeer.peerId}`);
+      const res = await fetch(`/api/messages/${activePeer.peerId}?viewerPeerId=${myDevice.peerId}`);
       setMessages(await res.json());
     } catch (e) {
       console.error("Failed to send message", e);
