@@ -1,0 +1,5 @@
+{
+  "name": "LocalNet",
+  "description": "A local-first, ephemeral social network and file-sharing app.",
+  "requestFramePermissions": []
+}
