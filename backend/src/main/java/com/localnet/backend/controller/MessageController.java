@@ -32,6 +32,11 @@ public class MessageController {
         return localNetService.getMessages(viewerPeerId, peerId);
     }
 
+    @GetMapping("/public")
+    public List<MessageView> getPublicMessages(@RequestParam String viewerPeerId) {
+        return localNetService.getPublicMessages(viewerPeerId);
+    }
+
     @PostMapping("/send")
     public Map<String, Object> sendMessage(@RequestBody SendMessageRequest request) {
         try {

@@ -30,6 +30,8 @@ import java.util.concurrent.CopyOnWriteArrayList;
 @Service
 public class LocalNetService {
 
+    private static final String PUBLIC_CHAT_KEY = "__public__";
+
     private final Map<String, Peer> peers = new ConcurrentHashMap<>();
     private final Map<String, List<MessageRecord>> conversations = new ConcurrentHashMap<>();
     private final Map<String, StoredFile> files = new ConcurrentHashMap<>();
@@ -69,11 +71,32 @@ public class LocalNetService {
                 .toList();
     }
 
+    public List<MessageView> getPublicMessages(String viewerPeerId) {
+        cleanupExpiredMessages(PUBLIC_CHAT_KEY);
+
+        return conversations.getOrDefault(PUBLIC_CHAT_KEY, List.of()).stream()
+                .map(message -> new MessageView(
+                        message.messageId(),
+                        message.text(),
+                        message.expiresAt(),
+                        Objects.equals(message.senderPeerId(), viewerPeerId),
+                        message.fileId(),
+                        message.fileName()
+                ))
+                .toList();
+    }
+
     public String sendMessage(SendMessageRequest request) {
         String senderPeerId = request.senderPeerId();
-        String targetPeerId = resolveTargetPeerId(request.targetPeerId(), request.targetIp());
-        if (!StringUtils.hasText(senderPeerId) || !StringUtils.hasText(targetPeerId)) {
-            throw new IllegalArgumentException("senderPeerId and targetPeerId are required");
+        boolean isPublicMessage = !StringUtils.hasText(request.targetPeerId()) && !StringUtils.hasText(request.targetIp());
+        String targetPeerId = isPublicMessage ? null : resolveTargetPeerId(request.targetPeerId(), request.targetIp());
+
+        if (!StringUtils.hasText(senderPeerId)) {
+            throw new IllegalArgumentException("senderPeerId is required");
+        }
+
+        if (!isPublicMessage && !StringUtils.hasText(targetPeerId)) {
+            throw new IllegalArgumentException("targetPeerId is required for direct messages");
         }
 
         boolean hasText = StringUtils.hasText(request.text());
@@ -88,14 +111,14 @@ public class LocalNetService {
         MessageRecord message = new MessageRecord(
                 "msg_" + Instant.now().toEpochMilli() + "_" + UUID.randomUUID().toString().substring(0, 6),
                 senderPeerId,
-                targetPeerId,
+            targetPeerId,
                 hasText ? request.text().trim() : "",
                 expiresAt,
                 request.fileId(),
                 request.fileName()
         );
 
-        String conversationKey = conversationKey(senderPeerId, targetPeerId);
+        String conversationKey = isPublicMessage ? PUBLIC_CHAT_KEY : conversationKey(senderPeerId, targetPeerId);
         conversations.computeIfAbsent(conversationKey, ignored -> new CopyOnWriteArrayList<>()).add(message);
         cleanupExpiredMessages(conversationKey);
         return message.messageId();

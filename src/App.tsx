@@ -8,6 +8,7 @@ type Peer = {
   deviceName: string;
   ipAddress: string;
   avatar?: string;
+  isPublic?: boolean;
 };
 
 type Message = {
@@ -20,6 +21,13 @@ type Message = {
 };
 
 const AVATARS = ['🐶', '🐱', '🐭', '🐹', '🐰', '🦊', '🐻', '🐼', '🐨', '🐯', '🦁', '🐮', '🐷', '🐸', '🐵', '🦄'];
+const PUBLIC_CHAT_PEER: Peer = {
+  peerId: 'public_room',
+  deviceName: 'Public Chat',
+  ipAddress: 'Everyone on LocalNet',
+  avatar: '🌐',
+  isPublic: true
+};
 
 export default function App() {
   const [myDevice, setMyDevice] = useState<Peer | null>(null);
@@ -31,6 +39,11 @@ export default function App() {
   const [ttlSeconds, setTtlSeconds] = useState(60);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const getMessagesEndpoint = (peer: Peer, viewerPeerId: string) =>
+    peer.isPublic
+      ? `/api/messages/public?viewerPeerId=${viewerPeerId}`
+      : `/api/messages/${peer.peerId}?viewerPeerId=${viewerPeerId}`;
 
   // Polling for peers
   useEffect(() => {
@@ -54,7 +67,7 @@ export default function App() {
     if (!activePeer || !myDevice) return;
     const fetchMessages = async () => {
       try {
-        const res = await fetch(`/api/messages/${activePeer.peerId}?viewerPeerId=${myDevice.peerId}`);
+        const res = await fetch(getMessagesEndpoint(activePeer, myDevice.peerId));
         const data = await res.json();
         setMessages(data);
       } catch (e) {
@@ -119,8 +132,8 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           senderPeerId: myDevice.peerId,
-          targetPeerId: activePeer.peerId,
-          targetIp: activePeer.ipAddress,
+          targetPeerId: activePeer.isPublic ? undefined : activePeer.peerId,
+          targetIp: activePeer.isPublic ? undefined : activePeer.ipAddress,
           text: inputText,
           ttlSeconds,
           fileId,
@@ -132,7 +145,7 @@ export default function App() {
       setSelectedFile(null);
       
       // Optimistic fetch
-      const res = await fetch(`/api/messages/${activePeer.peerId}?viewerPeerId=${myDevice.peerId}`);
+      const res = await fetch(getMessagesEndpoint(activePeer, myDevice.peerId));
       setMessages(await res.json());
     } catch (e) {
       console.error("Failed to send message", e);
@@ -175,6 +188,22 @@ export default function App() {
         
         <div className="flex-1 overflow-y-auto p-3 space-y-1">
           <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-2 mb-3 mt-2">Nearby Peers</h3>
+          <button
+            onClick={() => setActivePeer(PUBLIC_CHAT_PEER)}
+            className={cn(
+              "w-full flex items-center gap-3 p-3 rounded-xl transition-colors text-left",
+              activePeer?.isPublic ? "bg-indigo-600/10 border border-indigo-500/20" : "hover:bg-zinc-900 border border-transparent"
+            )}
+          >
+            <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-lg flex-shrink-0">
+              {PUBLIC_CHAT_PEER.avatar}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-medium text-zinc-200 truncate">{PUBLIC_CHAT_PEER.deviceName}</p>
+              <p className="text-xs text-zinc-500 truncate">{PUBLIC_CHAT_PEER.ipAddress}</p>
+            </div>
+          </button>
+
           {peers.length === 0 ? (
             <div className="text-center p-4 text-zinc-500 text-sm">
               <MonitorSmartphone className="w-8 h-8 mx-auto mb-2 opacity-20" />
@@ -239,7 +268,11 @@ export default function App() {
                   <div className="w-16 h-16 rounded-full bg-zinc-900 flex items-center justify-center">
                     <Send className="w-8 h-8 opacity-50" />
                   </div>
-                  <p>Send a secure, ephemeral message to {activePeer.deviceName}</p>
+                  <p>
+                    {activePeer.isPublic
+                      ? 'Send a secure, ephemeral message to everyone on LocalNet'
+                      : `Send a secure, ephemeral message to ${activePeer.deviceName}`}
+                  </p>
                 </div>
               ) : (
                 messages.map((msg) => (

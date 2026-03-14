@@ -13,7 +13,31 @@ async function startServer() {
   // --- MOCK BACKEND FOR PREVIEW ---
   // In production, the user will replace this with their own backend.
   const peers = new Map();
-  const messages = new Map();
+  const conversations = new Map();
+  const PUBLIC_CHAT_KEY = "__public__";
+
+  const conversationKey = (firstPeerId: string, secondPeerId: string) =>
+    firstPeerId < secondPeerId ? `${firstPeerId}::${secondPeerId}` : `${secondPeerId}::${firstPeerId}`;
+
+  const cleanupExpiredMessages = (key: string) => {
+    const now = Date.now();
+    const current = conversations.get(key) || [];
+    const active = current.filter((m: any) => m.expiresAt > now);
+    if (active.length === 0) {
+      conversations.delete(key);
+      return;
+    }
+    conversations.set(key, active);
+  };
+
+  const toMessageView = (message: any, viewerPeerId: string) => ({
+    messageId: message.messageId,
+    text: message.text,
+    expiresAt: message.expiresAt,
+    isMine: message.senderPeerId === viewerPeerId,
+    fileId: message.fileId,
+    fileName: message.fileName,
+  });
 
   app.get("/api/status", (req, res) => {
     res.json({ status: "ok", deviceName: "Windows-Host-Mock" });
@@ -32,52 +56,77 @@ async function startServer() {
     res.json(newPeer);
   });
 
+  app.get("/api/messages/public", (req, res) => {
+    const viewerPeerId = String(req.query.viewerPeerId || "");
+    cleanupExpiredMessages(PUBLIC_CHAT_KEY);
+    const items = conversations.get(PUBLIC_CHAT_KEY) || [];
+    res.json(items.map((m: any) => toMessageView(m, viewerPeerId)));
+  });
+
   app.get("/api/messages/:peerId", (req, res) => {
     const { peerId } = req.params;
-    const peerMsgs = messages.get(peerId) || [];
-    // Filter out expired messages
-    const now = Date.now();
-    const validMsgs = peerMsgs.filter((m: any) => m.expiresAt > now);
-    messages.set(peerId, validMsgs);
-    res.json(validMsgs);
+    const viewerPeerId = String(req.query.viewerPeerId || "");
+    if (!viewerPeerId) {
+      res.status(400).json({ success: false, message: "viewerPeerId is required" });
+      return;
+    }
+
+    const key = conversationKey(viewerPeerId, peerId);
+    cleanupExpiredMessages(key);
+    const items = conversations.get(key) || [];
+    res.json(items.map((m: any) => toMessageView(m, viewerPeerId)));
   });
 
   app.post("/api/messages/send", (req, res) => {
-    const { targetIp, text, ttlSeconds, fileId, fileName } = req.body;
-    // Find peer by IP or ID
-    const peer = Array.from(peers.values()).find(p => p.ipAddress === targetIp || p.peerId === targetIp);
-    const peerId = peer ? peer.peerId : targetIp;
+    const { senderPeerId, targetPeerId, targetIp, text, ttlSeconds, fileId, fileName } = req.body;
+    const isPublicMessage = !targetPeerId && !targetIp;
 
-    if (!messages.has(peerId)) messages.set(peerId, []);
+    if (!senderPeerId) {
+      res.status(400).json({ success: false, message: "senderPeerId is required" });
+      return;
+    }
+
+    let resolvedTargetPeerId = targetPeerId;
+    if (!isPublicMessage && !resolvedTargetPeerId && targetIp) {
+      const peer = Array.from(peers.values()).find((p: any) => p.ipAddress === targetIp);
+      resolvedTargetPeerId = peer?.peerId;
+    }
+
+    if (!isPublicMessage && !resolvedTargetPeerId) {
+      res.status(400).json({ success: false, message: "targetPeerId is required for direct messages" });
+      return;
+    }
+
+    const hasText = typeof text === "string" && text.trim().length > 0;
+    const hasFile = !!fileId;
+    if (!hasText && !hasFile) {
+      res.status(400).json({ success: false, message: "Message must contain text or a file" });
+      return;
+    }
+
+    const key = isPublicMessage ? PUBLIC_CHAT_KEY : conversationKey(senderPeerId, resolvedTargetPeerId);
+    if (!conversations.has(key)) conversations.set(key, []);
+
     const msg = {
-      messageId: "msg_" + Date.now(),
-      text,
-      expiresAt: Date.now() + (ttlSeconds || 60) * 1000,
-      isMine: true,
+      messageId: "msg_" + Date.now() + "_" + Math.random().toString(36).slice(2, 8),
+      senderPeerId,
+      targetPeerId: resolvedTargetPeerId,
+      text: hasText ? text.trim() : "",
+      expiresAt: Date.now() + Math.max(10, Number(ttlSeconds || 60)) * 1000,
       fileId,
       fileName
     };
-    messages.get(peerId).push(msg);
 
-    // Mock an auto-reply for demonstration purposes
-    setTimeout(() => {
-      if (messages.has(peerId)) {
-        messages.get(peerId).push({
-          messageId: "msg_" + Date.now() + "_reply",
-          text: "Received your message! (Auto-reply)",
-          expiresAt: Date.now() + (ttlSeconds || 60) * 1000,
-          isMine: false
-        });
-      }
-    }, 1500);
+    conversations.get(key).push(msg);
+    cleanupExpiredMessages(key);
 
     res.json({ success: true, messageId: msg.messageId });
   });
 
   app.delete("/api/messages/:id", (req, res) => {
     const { id } = req.params;
-    for (const [peerId, peerMsgs] of messages.entries()) {
-      messages.set(peerId, peerMsgs.filter((m: any) => m.messageId !== id));
+    for (const [key, items] of conversations.entries()) {
+      conversations.set(key, items.filter((m: any) => m.messageId !== id));
     }
     res.json({ success: true });
   });
