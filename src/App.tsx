@@ -42,8 +42,8 @@ export default function App() {
 
   const getMessagesEndpoint = (peer: Peer, viewerPeerId: string) =>
     peer.isPublic
-      ? `/api/messages/public?viewerPeerId=${viewerPeerId}`
-      : `/api/messages/${peer.peerId}?viewerPeerId=${viewerPeerId}`;
+      ? `/api/messages/public?viewerPeerId=${encodeURIComponent(viewerPeerId)}`
+      : `/api/messages/${encodeURIComponent(peer.peerId)}?viewerPeerId=${encodeURIComponent(viewerPeerId)}`;
 
   // Polling for peers
   useEffect(() => {
@@ -51,6 +51,9 @@ export default function App() {
     const fetchPeers = async () => {
       try {
         const res = await fetch('/api/peers');
+        if (!res.ok) {
+          throw new Error(`Failed to fetch peers (${res.status})`);
+        }
         const data = await res.json();
         setPeers(data.filter((p: Peer) => p.peerId !== myDevice.peerId));
       } catch (e) {
@@ -68,6 +71,9 @@ export default function App() {
     const fetchMessages = async () => {
       try {
         const res = await fetch(getMessagesEndpoint(activePeer, myDevice.peerId));
+        if (!res.ok) {
+          throw new Error(`Failed to fetch messages (${res.status})`);
+        }
         const data = await res.json();
         setMessages(data);
       } catch (e) {
@@ -90,6 +96,9 @@ export default function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ deviceName, avatar })
       });
+      if (!res.ok) {
+        throw new Error(`Failed to broadcast presence (${res.status})`);
+      }
       setMyDevice(await res.json());
     } catch (e) {
       console.error("Failed to broadcast presence", e);
@@ -105,11 +114,14 @@ export default function App() {
 
     if (selectedFile) {
       try {
-        await fetch('/api/files/request', {
+        const requestRes = await fetch('/api/files/request', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ fileName: selectedFile.name, fileSize: selectedFile.size, fileType: selectedFile.type })
         });
+        if (!requestRes.ok) {
+          throw new Error(`Failed to request file transfer (${requestRes.status})`);
+        }
 
         const formData = new FormData();
         formData.append('file', selectedFile);
@@ -117,7 +129,13 @@ export default function App() {
           method: 'POST',
           body: formData
         });
+        if (!uploadRes.ok) {
+          throw new Error(`Failed to upload file (${uploadRes.status})`);
+        }
         const uploadData = await uploadRes.json();
+        if (!uploadData.fileId) {
+          throw new Error('Upload response did not include fileId');
+        }
         fileId = uploadData.fileId;
         fileName = selectedFile.name;
       } catch (e) {
@@ -127,7 +145,7 @@ export default function App() {
     }
 
     try {
-      await fetch('/api/messages/send', {
+      const sendRes = await fetch('/api/messages/send', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -140,12 +158,18 @@ export default function App() {
           fileName
         })
       });
+      if (!sendRes.ok) {
+        throw new Error(`Failed to send message (${sendRes.status})`);
+      }
 
       setInputText('');
       setSelectedFile(null);
       
       // Optimistic fetch
       const res = await fetch(getMessagesEndpoint(activePeer, myDevice.peerId));
+      if (!res.ok) {
+        throw new Error(`Failed to refresh messages (${res.status})`);
+      }
       setMessages(await res.json());
     } catch (e) {
       console.error("Failed to send message", e);
@@ -153,9 +177,13 @@ export default function App() {
   };
 
   const handleDeleteMessage = async (id: string) => {
+    if (!myDevice) return;
     try {
-      await fetch(`/api/messages/${id}`, { method: 'DELETE' });
-      setMessages(messages.filter(m => m.messageId !== id));
+      const res = await fetch(`/api/messages/${encodeURIComponent(id)}?requesterPeerId=${encodeURIComponent(myDevice.peerId)}`, { method: 'DELETE' });
+      if (!res.ok) {
+        throw new Error(`Failed to delete message (${res.status})`);
+      }
+      setMessages(prev => prev.filter(m => m.messageId !== id));
     } catch (e) {
       console.error("Failed to delete message", e);
     }

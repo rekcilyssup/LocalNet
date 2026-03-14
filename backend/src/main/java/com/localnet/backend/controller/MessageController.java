@@ -16,6 +16,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 
 @RestController
 @RequestMapping("/api/messages")
@@ -48,8 +49,16 @@ public class MessageController {
     }
 
     @DeleteMapping("/{id}")
-    public Map<String, Boolean> deleteMessage(@PathVariable String id) {
-        localNetService.deleteMessage(id);
-        return Map.of("success", true);
+    public Map<String, Boolean> deleteMessage(@PathVariable String id, @RequestParam String requesterPeerId) {
+        try {
+            localNetService.deleteMessage(id, requesterPeerId);
+            return Map.of("success", true);
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
+        } catch (SecurityException exception) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, exception.getMessage(), exception);
+        } catch (NoSuchElementException exception) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, exception.getMessage(), exception);
+        }
     }
 }
