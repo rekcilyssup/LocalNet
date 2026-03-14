@@ -60,14 +60,7 @@ public class LocalNetService {
         cleanupExpiredMessages(conversationKey);
 
         return conversations.getOrDefault(conversationKey, List.of()).stream()
-                .map(message -> new MessageView(
-                        message.messageId(),
-                        message.text(),
-                        message.expiresAt(),
-                        Objects.equals(message.senderPeerId(), viewerPeerId),
-                        message.fileId(),
-                        message.fileName()
-                ))
+            .map(message -> toMessageView(message, viewerPeerId))
                 .toList();
     }
 
@@ -75,14 +68,7 @@ public class LocalNetService {
         cleanupExpiredMessages(PUBLIC_CHAT_KEY);
 
         return conversations.getOrDefault(PUBLIC_CHAT_KEY, List.of()).stream()
-                .map(message -> new MessageView(
-                        message.messageId(),
-                        message.text(),
-                        message.expiresAt(),
-                        Objects.equals(message.senderPeerId(), viewerPeerId),
-                        message.fileId(),
-                        message.fileName()
-                ))
+            .map(message -> toMessageView(message, viewerPeerId))
                 .toList();
     }
 
@@ -111,7 +97,7 @@ public class LocalNetService {
         MessageRecord message = new MessageRecord(
                 "msg_" + Instant.now().toEpochMilli() + "_" + UUID.randomUUID().toString().substring(0, 6),
                 senderPeerId,
-            targetPeerId,
+                targetPeerId,
                 hasText ? request.text().trim() : "",
                 expiresAt,
                 request.fileId(),
@@ -207,5 +193,21 @@ public class LocalNetService {
         return firstPeerId.compareTo(secondPeerId) < 0
                 ? firstPeerId + "::" + secondPeerId
                 : secondPeerId + "::" + firstPeerId;
+    }
+
+    private MessageView toMessageView(MessageRecord message, String viewerPeerId) {
+        Peer sender = peers.get(message.senderPeerId());
+        String senderName = sender != null ? sender.deviceName() : "Unknown";
+
+        return new MessageView(
+                message.messageId(),
+                message.text(),
+                message.expiresAt(),
+                Objects.equals(message.senderPeerId(), viewerPeerId),
+                message.senderPeerId(),
+                senderName,
+                message.fileId(),
+                message.fileName()
+        );
     }
 }
