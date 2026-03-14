@@ -16,6 +16,8 @@ type Message = {
   text: string;
   expiresAt: number;
   isMine?: boolean;
+  senderPeerId?: string;
+  senderDeviceName?: string;
   fileId?: string;
   fileName?: string;
 };
@@ -325,6 +327,14 @@ export default function App() {
                         ? "bg-indigo-600 text-white rounded-tr-sm" 
                         : "bg-zinc-800 text-zinc-100 rounded-tl-sm"
                     )}>
+                      {activePeer.isPublic && (
+                        <p className={cn(
+                          "text-xs mb-1 font-medium",
+                          msg.isMine ? "text-indigo-100" : "text-zinc-400"
+                        )}>
+                          {msg.isMine ? 'You' : (msg.senderDeviceName || 'Unknown')}
+                        </p>
+                      )}
                       {msg.fileId && (
                         <div className="mb-2 p-3 rounded-xl bg-black/20 flex items-center gap-3">
                           <FileIcon className="w-5 h-5 opacity-70" />

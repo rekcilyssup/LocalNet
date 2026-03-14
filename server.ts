@@ -30,14 +30,20 @@ async function startServer() {
     conversations.set(key, active);
   };
 
-  const toMessageView = (message: any, viewerPeerId: string) => ({
-    messageId: message.messageId,
-    text: message.text,
-    expiresAt: message.expiresAt,
-    isMine: message.senderPeerId === viewerPeerId,
-    fileId: message.fileId,
-    fileName: message.fileName,
-  });
+  const toMessageView = (message: any, viewerPeerId: string) => {
+    const sender = peers.get(message.senderPeerId);
+
+    return {
+      messageId: message.messageId,
+      text: message.text,
+      expiresAt: message.expiresAt,
+      isMine: message.senderPeerId === viewerPeerId,
+      senderPeerId: message.senderPeerId,
+      senderDeviceName: sender?.deviceName || "Unknown",
+      fileId: message.fileId,
+      fileName: message.fileName,
+    };
+  };
 
   app.get("/api/status", (req, res) => {
     res.json({ status: "ok", deviceName: "Windows-Host-Mock" });
