@@ -13,6 +13,7 @@ import org.springframework.web.multipart.MultipartFile;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.nio.file.InvalidPathException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -22,6 +23,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
+import java.util.NoSuchElementException;
 import java.util.Objects;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -80,6 +82,9 @@ public class LocalNetService {
         if (!StringUtils.hasText(senderPeerId)) {
             throw new IllegalArgumentException("senderPeerId is required");
         }
+        if (!peers.containsKey(senderPeerId)) {
+            throw new IllegalArgumentException("Unknown senderPeerId: " + senderPeerId);
+        }
 
         if (!isPublicMessage && !StringUtils.hasText(targetPeerId)) {
             throw new IllegalArgumentException("targetPeerId is required for direct messages");
@@ -110,10 +115,50 @@ public class LocalNetService {
         return message.messageId();
     }
 
-    public void deleteMessage(String messageId) {
-        conversations.replaceAll((key, messageList) -> messageList.stream()
-                .filter(message -> !Objects.equals(message.messageId(), messageId))
-                .toList());
+    public void deleteMessage(String messageId, String requesterPeerId) {
+        if (!StringUtils.hasText(messageId)) {
+            throw new IllegalArgumentException("messageId is required");
+        }
+        if (!StringUtils.hasText(requesterPeerId)) {
+            throw new IllegalArgumentException("requesterPeerId is required");
+        }
+        if (!peers.containsKey(requesterPeerId)) {
+            throw new IllegalArgumentException("Unknown requesterPeerId: " + requesterPeerId);
+        }
+
+        String messageConversationKey = null;
+        MessageRecord targetMessage = null;
+
+        for (Map.Entry<String, List<MessageRecord>> entry : conversations.entrySet()) {
+            for (MessageRecord message : entry.getValue()) {
+                if (Objects.equals(message.messageId(), messageId)) {
+                    messageConversationKey = entry.getKey();
+                    targetMessage = message;
+                    break;
+                }
+            }
+            if (targetMessage != null) {
+                break;
+            }
+        }
+
+        if (targetMessage == null || messageConversationKey == null) {
+            throw new NoSuchElementException("Message not found: " + messageId);
+        }
+
+        if (!Objects.equals(targetMessage.senderPeerId(), requesterPeerId)) {
+            throw new SecurityException("Only the original sender can delete this message");
+        }
+
+        List<MessageRecord> conversation = conversations.get(messageConversationKey);
+        if (conversation == null) {
+            throw new NoSuchElementException("Message not found: " + messageId);
+        }
+
+        conversation.removeIf(message -> Objects.equals(message.messageId(), messageId));
+        if (conversation.isEmpty()) {
+            conversations.remove(messageConversationKey);
+        }
     }
 
     public StoredFile storeFile(MultipartFile multipartFile) {
@@ -121,10 +166,23 @@ public class LocalNetService {
             throw new IllegalArgumentException("File upload cannot be empty");
         }
 
-        String originalName = StringUtils.cleanPath(Objects.requireNonNullElse(multipartFile.getOriginalFilename(), "upload.bin"));
+        String cleanedName = StringUtils.cleanPath(Objects.requireNonNullElse(multipartFile.getOriginalFilename(), "upload.bin"));
+        String originalName;
+        try {
+            originalName = Paths.get(cleanedName).getFileName().toString();
+        } catch (InvalidPathException exception) {
+            throw new IllegalArgumentException("Invalid file name", exception);
+        }
+        if (!StringUtils.hasText(originalName)) {
+            throw new IllegalArgumentException("File name is required");
+        }
+
         String fileId = "file_" + UUID.randomUUID().toString().replace("-", "");
         String storedName = fileId + "_" + originalName;
         Path destination = storagePath.resolve(storedName).normalize();
+        if (!destination.startsWith(storagePath)) {
+            throw new IllegalArgumentException("Invalid file path");
+        }
 
         try (InputStream inputStream = multipartFile.getInputStream()) {
             Files.copy(inputStream, destination, StandardCopyOption.REPLACE_EXISTING);
@@ -171,7 +229,7 @@ public class LocalNetService {
 
     private String resolveTargetPeerId(String targetPeerId, String targetIp) {
         if (StringUtils.hasText(targetPeerId)) {
-            return targetPeerId;
+            return peers.containsKey(targetPeerId) ? targetPeerId : null;
         }
 
         if (!StringUtils.hasText(targetIp)) {
