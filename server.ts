@@ -40,6 +40,7 @@ async function startServer() {
       isMine: message.senderPeerId === viewerPeerId,
       senderPeerId: message.senderPeerId,
       senderDeviceName: sender?.deviceName || "Unknown",
+      senderAvatar: sender?.avatar || "👤",
       fileId: message.fileId,
       fileName: message.fileName,
     };

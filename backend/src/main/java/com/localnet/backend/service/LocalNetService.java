@@ -256,6 +256,7 @@ public class LocalNetService {
     private MessageView toMessageView(MessageRecord message, String viewerPeerId) {
         Peer sender = peers.get(message.senderPeerId());
         String senderName = sender != null ? sender.deviceName() : "Unknown";
+        String senderAvatar = sender != null ? sender.avatar() : "👤";
 
         return new MessageView(
                 message.messageId(),
@@ -264,6 +265,7 @@ public class LocalNetService {
                 Objects.equals(message.senderPeerId(), viewerPeerId),
                 message.senderPeerId(),
                 senderName,
+                senderAvatar,
                 message.fileId(),
                 message.fileName()
         );

@@ -7,6 +7,7 @@ public record MessageView(
         boolean isMine,
         String senderPeerId,
         String senderDeviceName,
+        String senderAvatar,
         String fileId,
         String fileName
 ) {

@@ -18,6 +18,7 @@ type Message = {
   isMine?: boolean;
   senderPeerId?: string;
   senderDeviceName?: string;
+  senderAvatar?: string;
   fileId?: string;
   fileName?: string;
 };
@@ -200,43 +201,48 @@ export default function App() {
   }
 
   return (
-    <div className="flex h-[100dvh] bg-zinc-950 text-zinc-50 font-sans overflow-hidden">
+    <div className="premium-shell relative h-[100dvh] overflow-hidden p-3 md:p-5 text-zinc-50">
+      <div className="pointer-events-none absolute -left-28 top-16 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute -right-24 bottom-12 h-80 w-80 rounded-full bg-indigo-500/25 blur-3xl" />
+      <div className="relative z-10 flex h-full flex-col gap-3 md:flex-row">
       {/* Sidebar */}
-      <aside className="w-80 border-r border-zinc-900 bg-zinc-950/50 flex flex-col">
-        <div className="p-4 border-b border-zinc-900 flex items-center gap-3">
-          <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-xl">
+      <aside className="flex w-full shrink-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/55 shadow-2xl shadow-black/45 backdrop-blur-xl md:w-80">
+        <div className="flex items-center gap-3 border-b border-white/10 bg-white/[0.03] px-5 py-4">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-300/25 via-indigo-400/20 to-indigo-600/30 text-xl shadow-inner shadow-cyan-100/10">
             {myDevice.avatar}
           </div>
           <div>
-            <h2 className="font-semibold text-zinc-100">{myDevice.deviceName}</h2>
-            <p className="text-xs text-emerald-400 font-medium flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+            <h2 className="font-semibold tracking-tight text-slate-100">{myDevice.deviceName}</h2>
+            <p className="flex items-center gap-1 text-xs font-medium text-emerald-300">
+              <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-300"></span>
               Online on LocalNet
             </p>
           </div>
         </div>
         
-        <div className="flex-1 overflow-y-auto p-3 space-y-1">
-          <h3 className="text-xs font-semibold text-zinc-500 uppercase tracking-wider px-2 mb-3 mt-2">Nearby Peers</h3>
+        <div className="flex-1 space-y-1 overflow-y-auto p-3 md:p-4">
+          <h3 className="mb-3 mt-2 px-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Nearby Peers</h3>
           <button
             onClick={() => setActivePeer(PUBLIC_CHAT_PEER)}
             className={cn(
-              "w-full flex items-center gap-3 p-3 rounded-xl transition-colors text-left",
-              activePeer?.isPublic ? "bg-indigo-600/10 border border-indigo-500/20" : "hover:bg-zinc-900 border border-transparent"
+              "w-full rounded-2xl border p-3 text-left transition-all duration-300",
+              activePeer?.isPublic
+                ? "border-cyan-300/35 bg-gradient-to-r from-cyan-300/20 to-indigo-400/15 shadow-lg shadow-cyan-500/10"
+                : "border-transparent bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.06]"
             )}
           >
-            <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-lg flex-shrink-0">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white/10 text-lg">
               {PUBLIC_CHAT_PEER.avatar}
             </div>
             <div className="flex-1 min-w-0">
-              <p className="font-medium text-zinc-200 truncate">{PUBLIC_CHAT_PEER.deviceName}</p>
-              <p className="text-xs text-zinc-500 truncate">{PUBLIC_CHAT_PEER.ipAddress}</p>
+              <p className="truncate font-medium text-slate-100">{PUBLIC_CHAT_PEER.deviceName}</p>
+              <p className="truncate text-xs text-slate-400">{PUBLIC_CHAT_PEER.ipAddress}</p>
             </div>
           </button>
 
           {peers.length === 0 ? (
-            <div className="text-center p-4 text-zinc-500 text-sm">
-              <MonitorSmartphone className="w-8 h-8 mx-auto mb-2 opacity-20" />
+            <div className="p-4 text-center text-sm text-slate-400">
+              <MonitorSmartphone className="mx-auto mb-2 h-8 w-8 opacity-25" />
               No peers found on network
             </div>
           ) : (
@@ -245,16 +251,18 @@ export default function App() {
                 key={peer.peerId}
                 onClick={() => setActivePeer(peer)}
                 className={cn(
-                  "w-full flex items-center gap-3 p-3 rounded-xl transition-colors text-left",
-                  activePeer?.peerId === peer.peerId ? "bg-indigo-600/10 border border-indigo-500/20" : "hover:bg-zinc-900 border border-transparent"
+                  "w-full rounded-2xl border p-3 text-left transition-all duration-300",
+                  activePeer?.peerId === peer.peerId
+                    ? "border-cyan-300/35 bg-gradient-to-r from-cyan-300/15 to-indigo-400/15 shadow-lg shadow-cyan-500/10"
+                    : "border-transparent bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.06]"
                 )}
               >
-                <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-lg flex-shrink-0">
+                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white/10 text-lg">
                   {peer.avatar || '👤'}
                 </div>
                 <div className="flex-1 min-w-0">
-                  <p className="font-medium text-zinc-200 truncate">{peer.deviceName}</p>
-                  <p className="text-xs text-zinc-500 truncate">{peer.ipAddress}</p>
+                  <p className="truncate font-medium text-slate-100">{peer.deviceName}</p>
+                  <p className="truncate text-xs text-slate-400">{peer.ipAddress}</p>
                 </div>
               </button>
             ))
@@ -263,26 +271,26 @@ export default function App() {
       </aside>
 
       {/* Main Chat Area */}
-      <main className="flex-1 flex flex-col min-w-0 bg-zinc-950">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/45 shadow-2xl shadow-black/45 backdrop-blur-xl">
         {activePeer ? (
           <>
-            <header className="flex items-center justify-between px-6 py-4 border-b border-zinc-900 bg-zinc-950/80 backdrop-blur-md z-10">
+            <header className="z-10 flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-5 py-4 md:px-6">
               <div className="flex items-center gap-3">
-                <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-xl">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-xl">
                   {activePeer.avatar || '👤'}
                 </div>
                 <div>
-                  <h2 className="font-semibold text-zinc-100">{activePeer.deviceName}</h2>
-                  <p className="text-xs text-zinc-500">{activePeer.ipAddress}</p>
+                  <h2 className="font-semibold tracking-tight text-slate-100">{activePeer.deviceName}</h2>
+                  <p className="text-xs text-slate-400">{activePeer.ipAddress}</p>
                 </div>
               </div>
               
-              <div className="flex items-center gap-2 bg-zinc-900 rounded-lg p-1 border border-zinc-800">
-                <Timer className="w-4 h-4 text-zinc-500 ml-2" />
+              <div className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.05] p-1">
+                <Timer className="ml-2 h-4 w-4 text-slate-300" />
                 <select 
                   value={ttlSeconds}
                   onChange={(e) => setTtlSeconds(Number(e.target.value))}
-                  className="bg-transparent text-sm text-zinc-300 border-none focus:ring-0 py-1 pr-8 cursor-pointer"
+                  className="cursor-pointer border-none bg-transparent py-1 pr-8 text-sm text-slate-100 focus:ring-0"
                 >
                   <option value={10}>10 seconds</option>
                   <option value={60}>1 minute</option>
@@ -292,85 +300,95 @@ export default function App() {
               </div>
             </header>
 
-            <div className="flex-1 overflow-y-auto p-6 space-y-6">
+            <div className="flex-1 space-y-6 overflow-y-auto p-5 md:p-6">
               {messages.length === 0 ? (
-                <div className="h-full flex flex-col items-center justify-center text-zinc-500 space-y-4">
-                  <div className="w-16 h-16 rounded-full bg-zinc-900 flex items-center justify-center">
-                    <Send className="w-8 h-8 opacity-50" />
+                <div className="flex h-full flex-col items-center justify-center space-y-4 text-slate-400">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/[0.06]">
+                    <Send className="h-8 w-8 opacity-60" />
                   </div>
-                  <p>
+                  <p className="text-center text-sm md:text-base">
                     {activePeer.isPublic
-                      ? 'Send a secure, ephemeral message to everyone on LocalNet'
-                      : `Send a secure, ephemeral message to ${activePeer.deviceName}`}
+                      ? 'Send a premium, ephemeral message to everyone on LocalNet'
+                      : `Send a premium, ephemeral message to ${activePeer.deviceName}`}
                   </p>
                 </div>
               ) : (
-                messages.map((msg) => (
+                messages.map((msg) => {
+                  const showPublicSender = !!activePeer.isPublic && !msg.isMine;
+                  return (
                   <motion.div
                     initial={{ opacity: 0, y: 10, scale: 0.95 }}
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.9 }}
                     key={msg.messageId}
-                    className={cn("flex flex-col gap-1 max-w-[75%]", msg.isMine ? "ml-auto items-end" : "items-start")}
+                    className={cn("flex max-w-[90%] flex-col gap-1 md:max-w-[78%]", msg.isMine ? "ml-auto items-end" : "items-start")}
                   >
                     <div className="flex items-center gap-2 px-1">
                       <Countdown expiresAt={msg.expiresAt} onExpire={() => handleExpire(msg.messageId)} />
                       {msg.isMine && (
-                        <button onClick={() => handleDeleteMessage(msg.messageId)} className="text-zinc-600 hover:text-red-400 transition-colors">
+                        <button onClick={() => handleDeleteMessage(msg.messageId)} className="text-slate-500 transition-colors hover:text-rose-300">
                           <Trash2 className="w-3 h-3" />
                         </button>
                       )}
                     </div>
-                    <div className={cn(
-                      "px-4 py-3 rounded-2xl shadow-sm",
-                      msg.isMine 
-                        ? "bg-indigo-600 text-white rounded-tr-sm" 
-                        : "bg-zinc-800 text-zinc-100 rounded-tl-sm"
-                    )}>
+                    <div className={cn("flex items-end gap-2", msg.isMine && "flex-row-reverse")}>
+                      {showPublicSender && (
+                        <div className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/25 bg-white/10 text-sm shadow-lg shadow-black/20">
+                          {msg.senderAvatar || '👤'}
+                        </div>
+                      )}
+                      <div className={cn(
+                        "rounded-2xl border px-4 py-3 shadow-sm backdrop-blur",
+                        msg.isMine
+                          ? "rounded-tr-sm border-cyan-200/25 bg-gradient-to-br from-cyan-400/85 to-indigo-500/85 text-white"
+                          : "rounded-tl-sm border-white/15 bg-white/[0.07] text-slate-100"
+                      )}>
                       {activePeer.isPublic && (
                         <p className={cn(
-                          "text-xs mb-1 font-medium",
-                          msg.isMine ? "text-indigo-100" : "text-zinc-400"
+                          "mb-1 text-xs font-medium",
+                          msg.isMine ? "text-cyan-100" : "text-slate-300"
                         )}>
                           {msg.isMine ? 'You' : (msg.senderDeviceName || 'Unknown')}
                         </p>
                       )}
                       {msg.fileId && (
-                        <div className="mb-2 p-3 rounded-xl bg-black/20 flex items-center gap-3">
-                          <FileIcon className="w-5 h-5 opacity-70" />
-                          <span className="text-sm truncate max-w-[150px]">{msg.fileName}</span>
-                          <a href={`/api/files/download/${msg.fileId}`} download={msg.fileName} className="ml-auto p-1.5 bg-white/10 hover:bg-white/20 rounded-lg transition-colors">
+                        <div className="mb-2 flex items-center gap-3 rounded-xl border border-white/15 bg-black/20 p-3">
+                          <FileIcon className="h-5 w-5 opacity-80" />
+                          <span className="max-w-[150px] truncate text-sm">{msg.fileName}</span>
+                          <a href={`/api/files/download/${msg.fileId}`} download={msg.fileName} className="ml-auto rounded-lg bg-white/10 p-1.5 transition-colors hover:bg-white/20">
                             <Download className="w-4 h-4" />
                           </a>
                         </div>
                       )}
                       {msg.text && <p className="text-[15px] leading-relaxed break-words">{msg.text}</p>}
+                      </div>
                     </div>
                   </motion.div>
-                ))
+                );
+                })
               )}
               <div ref={messagesEndRef} className="h-1" />
             </div>
 
-            <footer className="p-4 bg-zinc-950 border-t border-zinc-900 z-10">
+            <footer className="z-10 border-t border-white/10 bg-white/[0.03] p-4">
               <AnimatePresence>
                 {selectedFile && (
                   <motion.div 
                     initial={{ opacity: 0, height: 0, marginBottom: 0 }}
                     animate={{ opacity: 1, height: 'auto', marginBottom: 16 }}
                     exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    className="flex items-center gap-3 bg-zinc-900 p-3 rounded-xl border border-zinc-800 overflow-hidden"
+                    className="flex items-center gap-3 overflow-hidden rounded-xl border border-white/15 bg-white/[0.06] p-3"
                   >
-                    <div className="w-10 h-10 rounded-lg bg-indigo-500/20 text-indigo-400 flex items-center justify-center flex-shrink-0">
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-cyan-300/20 text-cyan-200">
                       <FileIcon className="w-5 h-5" />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-zinc-200 truncate">{selectedFile.name}</p>
-                      <p className="text-xs text-zinc-500">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
+                      <p className="truncate text-sm font-medium text-slate-100">{selectedFile.name}</p>
+                      <p className="text-xs text-slate-400">{(selectedFile.size / 1024 / 1024).toFixed(2)} MB</p>
                     </div>
                     <button 
                       onClick={() => setSelectedFile(null)}
-                      className="p-2 text-zinc-400 hover:text-zinc-200 hover:bg-zinc-800 rounded-full transition-colors"
+                      className="rounded-full p-2 text-slate-400 transition-colors hover:bg-white/10 hover:text-slate-200"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -379,11 +397,11 @@ export default function App() {
               </AnimatePresence>
 
               <form onSubmit={handleSendMessage} className="flex items-end gap-2">
-                <div className="flex-1 bg-zinc-900 rounded-2xl border border-zinc-800 focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all flex items-end overflow-hidden">
+                <div className="flex flex-1 items-end overflow-hidden rounded-2xl border border-white/15 bg-white/[0.05] transition-all focus-within:border-cyan-300/45 focus-within:ring-1 focus-within:ring-cyan-300/30">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-3.5 text-zinc-400 hover:text-indigo-400 transition-colors"
+                    className="p-3.5 text-slate-400 transition-colors hover:text-cyan-200"
                   >
                     <Paperclip className="w-5 h-5" />
                   </button>
@@ -403,7 +421,7 @@ export default function App() {
                       }
                     }}
                     placeholder={`Message ${activePeer.deviceName}...`}
-                    className="flex-1 bg-transparent border-none focus:ring-0 text-zinc-100 placeholder:text-zinc-600 resize-none py-3.5 px-2 max-h-32 min-h-[52px]"
+                    className="max-h-32 min-h-[52px] flex-1 resize-none border-none bg-transparent px-2 py-3.5 text-slate-100 placeholder:text-slate-500 focus:ring-0"
                     rows={1}
                     style={{ height: inputText ? 'auto' : '52px' }}
                   />
@@ -411,7 +429,7 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={!inputText.trim() && !selectedFile}
-                  className="p-4 bg-indigo-600 text-white rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-colors flex-shrink-0 shadow-sm"
+                  className="flex-shrink-0 rounded-2xl bg-gradient-to-r from-cyan-400 to-indigo-500 p-4 text-white shadow-lg shadow-cyan-500/30 transition-all hover:from-cyan-300 hover:to-indigo-400 disabled:opacity-50 disabled:hover:from-cyan-400 disabled:hover:to-indigo-500"
                 >
                   <Send className="w-5 h-5" />
                 </button>
@@ -419,13 +437,14 @@ export default function App() {
             </footer>
           </>
         ) : (
-          <div className="flex-1 flex flex-col items-center justify-center text-zinc-500 p-6 text-center">
-            <MonitorSmartphone className="w-16 h-16 mb-4 opacity-20" />
-            <h2 className="text-xl font-medium text-zinc-300 mb-2">Select a Peer</h2>
+          <div className="flex flex-1 flex-col items-center justify-center p-6 text-center text-slate-400">
+            <MonitorSmartphone className="mb-4 h-16 w-16 opacity-25" />
+            <h2 className="mb-2 text-xl font-medium text-slate-200">Select a Peer</h2>
             <p className="max-w-md">Choose a device from the sidebar to start a secure, ephemeral chat session over your local network.</p>
           </div>
         )}
       </main>
+      </div>
     </div>
   );
 }
@@ -449,7 +468,7 @@ function Countdown({ expiresAt, onExpire }: { expiresAt: number, onExpire: () =>
   const seconds = Math.floor((timeLeft % 60000) / 1000);
   
   return (
-    <span className="text-[10px] text-zinc-500 flex items-center gap-1 font-mono">
+    <span className="flex items-center gap-1 font-mono text-[10px] text-slate-400">
       <Clock className="w-3 h-3"/> 
       {minutes > 0 ? `${minutes}m ` : ''}{seconds}s
     </span>
@@ -461,31 +480,34 @@ function JoinScreen({ onJoin }: { onJoin: (name: string, avatar: string) => void
   const [avatar, setAvatar] = useState(AVATARS[0]);
 
   return (
-    <div className="min-h-[100dvh] bg-zinc-950 flex flex-col items-center justify-center p-6 font-sans text-zinc-50">
+    <div className="premium-shell relative min-h-[100dvh] p-6 text-zinc-50">
+      <div className="pointer-events-none absolute -left-16 top-10 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
+      <div className="pointer-events-none absolute -right-20 bottom-0 h-80 w-80 rounded-full bg-indigo-500/25 blur-3xl" />
+      <div className="relative z-10 flex min-h-[100dvh] items-center justify-center">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-sm space-y-8"
       >
         <div className="text-center space-y-2">
-          <div className="w-20 h-20 bg-indigo-600 rounded-3xl mx-auto flex items-center justify-center shadow-lg shadow-indigo-500/20 rotate-3">
-            <MonitorSmartphone className="w-10 h-10 text-white" />
+          <div className="mx-auto flex h-20 w-20 rotate-3 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-400 to-indigo-500 shadow-lg shadow-cyan-500/25">
+            <MonitorSmartphone className="h-10 w-10 text-white" />
           </div>
-          <h1 className="text-3xl font-bold tracking-tight mt-6">LocalNet</h1>
-          <p className="text-zinc-400 text-sm">Peer-to-peer ephemeral sharing</p>
+          <h1 className="mt-6 text-3xl font-bold tracking-tight">LocalNet</h1>
+          <p className="text-sm text-slate-300">Peer-to-peer ephemeral sharing</p>
         </div>
 
-        <div className="bg-zinc-900/50 p-6 rounded-3xl border border-zinc-800/50 backdrop-blur-xl space-y-6 shadow-xl">
+        <div className="space-y-6 rounded-3xl border border-white/10 bg-slate-950/55 p-6 shadow-2xl shadow-black/45 backdrop-blur-xl">
           <div className="space-y-3">
-            <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider ml-1">Choose Avatar</label>
+            <label className="ml-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Choose Avatar</label>
             <div className="grid grid-cols-8 gap-2">
               {AVATARS.map((a) => (
                 <button
                   key={a}
                   onClick={() => setAvatar(a)}
                   className={cn(
-                    "text-2xl p-1 rounded-xl transition-all hover:scale-110",
-                    avatar === a ? "bg-zinc-800 ring-2 ring-indigo-500 scale-110 shadow-md" : "opacity-50 hover:opacity-100"
+                    "rounded-xl p-1 text-2xl transition-all hover:scale-110",
+                    avatar === a ? "scale-110 bg-white/10 ring-2 ring-cyan-300 shadow-md shadow-cyan-500/20" : "opacity-50 hover:opacity-100"
                   )}
                 >
                   {a}
@@ -495,15 +517,15 @@ function JoinScreen({ onJoin }: { onJoin: (name: string, avatar: string) => void
           </div>
 
           <div className="space-y-3">
-            <label className="text-xs font-semibold text-zinc-400 uppercase tracking-wider ml-1">Device Name</label>
+            <label className="ml-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Device Name</label>
             <div className="relative">
-              <User className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-zinc-500" />
+              <User className="absolute left-4 top-1/2 h-5 w-5 -translate-y-1/2 text-slate-400" />
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Windows-Host"
-                className="w-full bg-zinc-950 border border-zinc-800 rounded-2xl py-4 pl-12 pr-4 text-zinc-100 placeholder:text-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500/50 focus:border-indigo-500 transition-all"
+                className="w-full rounded-2xl border border-white/15 bg-white/[0.04] py-4 pl-12 pr-4 text-slate-100 placeholder:text-slate-500 transition-all focus:border-cyan-300/55 focus:outline-none focus:ring-2 focus:ring-cyan-300/35"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && name.trim()) {
                     onJoin(name.trim(), avatar);
@@ -516,12 +538,13 @@ function JoinScreen({ onJoin }: { onJoin: (name: string, avatar: string) => void
           <button
             onClick={() => name.trim() && onJoin(name.trim(), avatar)}
             disabled={!name.trim()}
-            className="w-full bg-indigo-600 text-white font-semibold py-4 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:hover:bg-indigo-600 transition-all shadow-lg shadow-indigo-500/25 active:scale-[0.98]"
+            className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-indigo-500 py-4 font-semibold text-white shadow-lg shadow-cyan-500/25 transition-all hover:from-cyan-300 hover:to-indigo-400 disabled:opacity-50 disabled:hover:from-cyan-400 disabled:hover:to-indigo-500 active:scale-[0.98]"
           >
             Broadcast Presence
           </button>
         </div>
       </motion.div>
+      </div>
     </div>
   );
 }
