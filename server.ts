@@ -15,6 +15,8 @@ async function startServer() {
   const peers = new Map();
   const conversations = new Map();
   const PUBLIC_CHAT_KEY = "__public__";
+  const PUBLIC_ROOM_ID = "public_room";
+  const readMessageIdsByViewer = new Map<string, Map<string, Set<string>>>();
 
   const conversationKey = (firstPeerId: string, secondPeerId: string) =>
     firstPeerId < secondPeerId ? `${firstPeerId}::${secondPeerId}` : `${secondPeerId}::${firstPeerId}`;
@@ -46,6 +48,65 @@ async function startServer() {
     };
   };
 
+  const getReadMessageIds = (viewerPeerId: string, key: string) => {
+    if (!readMessageIdsByViewer.has(viewerPeerId)) {
+      readMessageIdsByViewer.set(viewerPeerId, new Map());
+    }
+    const readByConversation = readMessageIdsByViewer.get(viewerPeerId)!;
+    if (!readByConversation.has(key)) {
+      readByConversation.set(key, new Set());
+    }
+    return readByConversation.get(key)!;
+  };
+
+  const markConversationAsRead = (viewerPeerId: string, key: string, items: any[]) => {
+    if (!viewerPeerId) return;
+    const readIds = getReadMessageIds(viewerPeerId, key);
+    for (const message of items) {
+      if (message.senderPeerId !== viewerPeerId) {
+        readIds.add(message.messageId);
+      }
+    }
+  };
+
+  const countUnread = (viewerPeerId: string, key: string, items: any[]) => {
+    const readByConversation = readMessageIdsByViewer.get(viewerPeerId);
+    const readIds = readByConversation?.get(key) || new Set<string>();
+    return items.filter((message: any) => message.senderPeerId !== viewerPeerId && !readIds.has(message.messageId)).length;
+  };
+
+  const getOtherPeerId = (viewerPeerId: string, key: string) => {
+    const parts = key.split("::");
+    if (parts.length !== 2) return null;
+    if (parts[0] === viewerPeerId) return parts[1];
+    if (parts[1] === viewerPeerId) return parts[0];
+    return null;
+  };
+
+  const getUnreadCounts = (viewerPeerId: string) => {
+    const counts: Record<string, number> = {};
+
+    for (const key of conversations.keys()) {
+      cleanupExpiredMessages(key);
+    }
+
+    for (const [key, items] of conversations.entries()) {
+      const unread = countUnread(viewerPeerId, key, items);
+      if (unread <= 0) continue;
+
+      if (key === PUBLIC_CHAT_KEY) {
+        counts[PUBLIC_ROOM_ID] = unread;
+        continue;
+      }
+
+      const otherPeerId = getOtherPeerId(viewerPeerId, key);
+      if (!otherPeerId) continue;
+      counts[otherPeerId] = unread;
+    }
+
+    return counts;
+  };
+
   app.get("/api/status", (req, res) => {
     res.json({ status: "ok", deviceName: "Windows-Host-Mock" });
   });
@@ -67,7 +128,17 @@ async function startServer() {
     const viewerPeerId = String(req.query.viewerPeerId || "");
     cleanupExpiredMessages(PUBLIC_CHAT_KEY);
     const items = conversations.get(PUBLIC_CHAT_KEY) || [];
+    markConversationAsRead(viewerPeerId, PUBLIC_CHAT_KEY, items);
     res.json(items.map((m: any) => toMessageView(m, viewerPeerId)));
+  });
+
+  app.get("/api/messages/unread-counts", (req, res) => {
+    const viewerPeerId = String(req.query.viewerPeerId || "");
+    if (!viewerPeerId) {
+      res.status(400).json({ success: false, message: "viewerPeerId is required" });
+      return;
+    }
+    res.json(getUnreadCounts(viewerPeerId));
   });
 
   app.get("/api/messages/:peerId", (req, res) => {
@@ -81,6 +152,7 @@ async function startServer() {
     const key = conversationKey(viewerPeerId, peerId);
     cleanupExpiredMessages(key);
     const items = conversations.get(key) || [];
+    markConversationAsRead(viewerPeerId, key, items);
     res.json(items.map((m: any) => toMessageView(m, viewerPeerId)));
   });
 

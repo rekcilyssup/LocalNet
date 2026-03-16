@@ -21,10 +21,12 @@ import java.nio.file.StandardCopyOption;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.NoSuchElementException;
 import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -33,9 +35,11 @@ import java.util.concurrent.CopyOnWriteArrayList;
 public class LocalNetService {
 
     private static final String PUBLIC_CHAT_KEY = "__public__";
+    private static final String PUBLIC_ROOM_ID = "public_room";
 
     private final Map<String, Peer> peers = new ConcurrentHashMap<>();
     private final Map<String, List<MessageRecord>> conversations = new ConcurrentHashMap<>();
+    private final Map<String, Map<String, Set<String>>> readMessageIdsByViewer = new ConcurrentHashMap<>();
     private final Map<String, StoredFile> files = new ConcurrentHashMap<>();
     private final Path storagePath;
 
@@ -61,17 +65,59 @@ public class LocalNetService {
         String conversationKey = conversationKey(viewerPeerId, otherPeerId);
         cleanupExpiredMessages(conversationKey);
 
-        return conversations.getOrDefault(conversationKey, List.of()).stream()
-            .map(message -> toMessageView(message, viewerPeerId))
+        List<MessageRecord> currentMessages = conversations.getOrDefault(conversationKey, List.of());
+        markConversationAsRead(viewerPeerId, conversationKey, currentMessages);
+
+        return currentMessages.stream()
+                .map(message -> toMessageView(message, viewerPeerId))
                 .toList();
     }
 
     public List<MessageView> getPublicMessages(String viewerPeerId) {
         cleanupExpiredMessages(PUBLIC_CHAT_KEY);
 
-        return conversations.getOrDefault(PUBLIC_CHAT_KEY, List.of()).stream()
-            .map(message -> toMessageView(message, viewerPeerId))
+        List<MessageRecord> currentMessages = conversations.getOrDefault(PUBLIC_CHAT_KEY, List.of());
+        markConversationAsRead(viewerPeerId, PUBLIC_CHAT_KEY, currentMessages);
+
+        return currentMessages.stream()
+                .map(message -> toMessageView(message, viewerPeerId))
                 .toList();
+    }
+
+    public Map<String, Integer> getUnreadCounts(String viewerPeerId) {
+        if (!StringUtils.hasText(viewerPeerId)) {
+            throw new IllegalArgumentException("viewerPeerId is required");
+        }
+        if (!peers.containsKey(viewerPeerId)) {
+            throw new IllegalArgumentException("Unknown viewerPeerId: " + viewerPeerId);
+        }
+
+        for (String conversationKey : List.copyOf(conversations.keySet())) {
+            cleanupExpiredMessages(conversationKey);
+        }
+
+        Map<String, Integer> unreadCounts = new HashMap<>();
+        for (Map.Entry<String, List<MessageRecord>> entry : conversations.entrySet()) {
+            String conversationKey = entry.getKey();
+            List<MessageRecord> messages = entry.getValue();
+            int unread = countUnreadMessages(viewerPeerId, conversationKey, messages);
+            if (unread <= 0) {
+                continue;
+            }
+
+            if (Objects.equals(conversationKey, PUBLIC_CHAT_KEY)) {
+                unreadCounts.put(PUBLIC_ROOM_ID, unread);
+                continue;
+            }
+
+            String otherPeerId = resolveOtherPeerIdForViewer(viewerPeerId, conversationKey);
+            if (!StringUtils.hasText(otherPeerId)) {
+                continue;
+            }
+            unreadCounts.put(otherPeerId, unread);
+        }
+
+        return unreadCounts;
     }
 
     public String sendMessage(SendMessageRequest request) {
@@ -158,7 +204,11 @@ public class LocalNetService {
         conversation.removeIf(message -> Objects.equals(message.messageId(), messageId));
         if (conversation.isEmpty()) {
             conversations.remove(messageConversationKey);
+            removeConversationReadState(messageConversationKey);
+            return;
         }
+
+        cleanupReadStateForConversation(messageConversationKey, conversation);
     }
 
     public StoredFile storeFile(MultipartFile multipartFile) {
@@ -221,10 +271,12 @@ public class LocalNetService {
 
         if (activeMessages.isEmpty()) {
             conversations.remove(conversationKey);
+            removeConversationReadState(conversationKey);
             return;
         }
 
         conversations.put(conversationKey, new CopyOnWriteArrayList<>(activeMessages));
+        cleanupReadStateForConversation(conversationKey, activeMessages);
     }
 
     private String resolveTargetPeerId(String targetPeerId, String targetIp) {
@@ -251,6 +303,77 @@ public class LocalNetService {
         return firstPeerId.compareTo(secondPeerId) < 0
                 ? firstPeerId + "::" + secondPeerId
                 : secondPeerId + "::" + firstPeerId;
+    }
+
+    private void markConversationAsRead(String viewerPeerId, String conversationKey, List<MessageRecord> messages) {
+        if (!StringUtils.hasText(viewerPeerId) || messages.isEmpty()) {
+            return;
+        }
+
+        Map<String, Set<String>> readByConversation = readMessageIdsByViewer.computeIfAbsent(
+                viewerPeerId,
+                ignored -> new ConcurrentHashMap<>()
+        );
+        Set<String> readMessageIds = readByConversation.computeIfAbsent(
+                conversationKey,
+                ignored -> ConcurrentHashMap.newKeySet()
+        );
+
+        for (MessageRecord message : messages) {
+            if (!Objects.equals(message.senderPeerId(), viewerPeerId)) {
+                readMessageIds.add(message.messageId());
+            }
+        }
+    }
+
+    private int countUnreadMessages(String viewerPeerId, String conversationKey, List<MessageRecord> messages) {
+        Set<String> readMessageIds = readMessageIdsByViewer
+                .getOrDefault(viewerPeerId, Map.of())
+                .getOrDefault(conversationKey, Set.of());
+
+        return (int) messages.stream()
+                .filter(message -> !Objects.equals(message.senderPeerId(), viewerPeerId))
+                .filter(message -> !readMessageIds.contains(message.messageId()))
+                .count();
+    }
+
+    private String resolveOtherPeerIdForViewer(String viewerPeerId, String conversationKey) {
+        String[] participants = conversationKey.split("::", 2);
+        if (participants.length != 2) {
+            return null;
+        }
+        if (Objects.equals(participants[0], viewerPeerId)) {
+            return participants[1];
+        }
+        if (Objects.equals(participants[1], viewerPeerId)) {
+            return participants[0];
+        }
+        return null;
+    }
+
+    private void cleanupReadStateForConversation(String conversationKey, List<MessageRecord> activeMessages) {
+        Set<String> activeMessageIds = activeMessages.stream()
+                .map(MessageRecord::messageId)
+                .collect(java.util.stream.Collectors.toSet());
+
+        for (Map<String, Set<String>> readByConversation : readMessageIdsByViewer.values()) {
+            Set<String> readMessageIds = readByConversation.get(conversationKey);
+            if (readMessageIds == null) {
+                continue;
+            }
+            readMessageIds.retainAll(activeMessageIds);
+            if (readMessageIds.isEmpty()) {
+                readByConversation.remove(conversationKey);
+            }
+        }
+        readMessageIdsByViewer.entrySet().removeIf(entry -> entry.getValue().isEmpty());
+    }
+
+    private void removeConversationReadState(String conversationKey) {
+        for (Map<String, Set<String>> readByConversation : readMessageIdsByViewer.values()) {
+            readByConversation.remove(conversationKey);
+        }
+        readMessageIdsByViewer.entrySet().removeIf(entry -> entry.getValue().isEmpty());
     }
 
     private MessageView toMessageView(MessageRecord message, String viewerPeerId) {

@@ -33,6 +33,7 @@ The backend exposes the same API surface the UI expects:
 - `GET /api/messages/{peerId}?viewerPeerId=...`
 - `POST /api/messages/send`
 - `DELETE /api/messages/{id}?requesterPeerId=...`
+- `GET /api/messages/unread-counts?viewerPeerId=...`
 - `POST /api/files/request`
 - `POST /api/files/upload`
 - `GET /api/files/download/{id}`

@@ -36,10 +36,15 @@ const PEER_POLL_INTERVAL_MS = 5000;
 const MESSAGE_POLL_INTERVAL_MS = 2000;
 const WS_RECONNECT_DELAY_MS = 2000;
 
+const getUnreadKeyForPeer = (peer: Peer) => (peer.isPublic ? PUBLIC_CHAT_PEER.peerId : peer.peerId);
+
 const getMessagesEndpoint = (peer: Peer, viewerPeerId: string) =>
   peer.isPublic
     ? `/api/messages/public?viewerPeerId=${encodeURIComponent(viewerPeerId)}`
     : `/api/messages/${encodeURIComponent(peer.peerId)}?viewerPeerId=${encodeURIComponent(viewerPeerId)}`;
+
+const getUnreadCountsEndpoint = (viewerPeerId: string) =>
+  `/api/messages/unread-counts?viewerPeerId=${encodeURIComponent(viewerPeerId)}`;
 
 const getWebSocketEndpoint = () => {
   const envBase = import.meta.env.VITE_API_BASE_URL;
@@ -63,6 +68,7 @@ const getWebSocketEndpoint = () => {
 export default function App() {
   const [myDevice, setMyDevice] = useState<Peer | null>(null);
   const [peers, setPeers] = useState<Peer[]>([]);
+  const [unreadCounts, setUnreadCounts] = useState<Record<string, number>>({});
   const [activePeer, setActivePeer] = useState<Peer | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -118,20 +124,67 @@ export default function App() {
     }
   }, []);
 
+  const fetchUnreadCounts = useCallback(async () => {
+    const currentDevice = myDeviceRef.current;
+    if (!currentDevice) {
+      return;
+    }
+
+    try {
+      const res = await fetch(getUnreadCountsEndpoint(currentDevice.peerId));
+      if (!res.ok) {
+        throw new Error(`Failed to fetch unread counts (${res.status})`);
+      }
+
+      const data = await res.json() as Record<string, unknown>;
+      const normalizedCounts: Record<string, number> = {};
+      for (const [key, value] of Object.entries(data)) {
+        const count = Number(value);
+        if (Number.isFinite(count) && count > 0) {
+          normalizedCounts[key] = count;
+        }
+      }
+      setUnreadCounts(normalizedCounts);
+    } catch (e) {
+      console.error('Failed to fetch unread counts', e);
+    }
+  }, []);
+
   useEffect(() => {
     if (!myDevice) {
       return;
     }
     void fetchPeers();
-  }, [myDevice, fetchPeers]);
+    void fetchUnreadCounts();
+  }, [myDevice, fetchPeers, fetchUnreadCounts]);
 
   useEffect(() => {
     if (!myDevice || !activePeer) {
       setMessages([]);
       return;
     }
-    void fetchMessages();
-  }, [activePeer, myDevice, fetchMessages]);
+    const syncActiveConversation = async () => {
+      await fetchMessages();
+      await fetchUnreadCounts();
+    };
+    void syncActiveConversation();
+  }, [activePeer, myDevice, fetchMessages, fetchUnreadCounts]);
+
+  useEffect(() => {
+    if (!activePeer) {
+      return;
+    }
+
+    const unreadKey = getUnreadKeyForPeer(activePeer);
+    setUnreadCounts((prev) => {
+      if (!prev[unreadKey]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[unreadKey];
+      return next;
+    });
+  }, [activePeer]);
 
   useEffect(() => {
     if (!myDevice) {
@@ -153,6 +206,7 @@ export default function App() {
       if (!messagePollInterval) {
         messagePollInterval = setInterval(() => {
           void fetchMessages();
+          void fetchUnreadCounts();
         }, MESSAGE_POLL_INTERVAL_MS);
       }
     };
@@ -183,10 +237,12 @@ export default function App() {
         const event = JSON.parse(rawData) as { type?: string };
         if (event.type === 'peer.updated') {
           void fetchPeers();
+          void fetchUnreadCounts();
           return;
         }
         if (event.type === 'message.updated') {
           void fetchMessages();
+          void fetchUnreadCounts();
           return;
         }
       } catch (error) {
@@ -195,6 +251,7 @@ export default function App() {
 
       void fetchPeers();
       void fetchMessages();
+      void fetchUnreadCounts();
     };
 
     const connect = () => {
@@ -215,6 +272,7 @@ export default function App() {
         stopPollingFallback();
         void fetchPeers();
         void fetchMessages();
+        void fetchUnreadCounts();
       };
 
       socket.onmessage = (event) => {
@@ -224,6 +282,7 @@ export default function App() {
         }
         void fetchPeers();
         void fetchMessages();
+        void fetchUnreadCounts();
       };
 
       socket.onerror = () => {
@@ -251,7 +310,7 @@ export default function App() {
         socket.close();
       }
     };
-  }, [myDevice, fetchPeers, fetchMessages]);
+  }, [myDevice, fetchPeers, fetchMessages, fetchUnreadCounts]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -339,6 +398,7 @@ export default function App() {
         throw new Error(`Failed to refresh messages (${res.status})`);
       }
       setMessages(await res.json());
+      void fetchUnreadCounts();
     } catch (e) {
       console.error("Failed to send message", e);
     }
@@ -352,6 +412,7 @@ export default function App() {
         throw new Error(`Failed to delete message (${res.status})`);
       }
       setMessages(prev => prev.filter(m => m.messageId !== id));
+      void fetchUnreadCounts();
     } catch (e) {
       console.error("Failed to delete message", e);
     }
@@ -360,6 +421,22 @@ export default function App() {
   const handleExpire = (id: string) => {
     setMessages(prev => prev.filter(m => m.messageId !== id));
   };
+
+  const handleOpenPeer = (peer: Peer) => {
+    setActivePeer(peer);
+    const unreadKey = getUnreadKeyForPeer(peer);
+    setUnreadCounts((prev) => {
+      if (!prev[unreadKey]) {
+        return prev;
+      }
+      const next = { ...prev };
+      delete next[unreadKey];
+      return next;
+    });
+  };
+
+  const getUnreadCount = (peer: Peer) => unreadCounts[getUnreadKeyForPeer(peer)] ?? 0;
+  const publicUnreadCount = getUnreadCount(PUBLIC_CHAT_PEER);
 
   if (!myDevice) {
     return <JoinScreen onJoin={handleJoin} />;
@@ -388,9 +465,9 @@ export default function App() {
         <div className="flex-1 space-y-1 overflow-y-auto p-3 md:p-4">
           <h3 className="mb-3 mt-2 px-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Nearby Peers</h3>
           <button
-            onClick={() => setActivePeer(PUBLIC_CHAT_PEER)}
+            onClick={() => handleOpenPeer(PUBLIC_CHAT_PEER)}
             className={cn(
-              "w-full rounded-2xl border p-3 text-left transition-all duration-300",
+              "w-full rounded-2xl border p-3 text-left transition-all duration-300 flex items-center gap-3",
               activePeer?.isPublic
                 ? "border-cyan-300/35 bg-gradient-to-r from-cyan-300/20 to-indigo-400/15 shadow-lg shadow-cyan-500/10"
                 : "border-transparent bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.06]"
@@ -403,6 +480,7 @@ export default function App() {
               <p className="truncate font-medium text-slate-100">{PUBLIC_CHAT_PEER.deviceName}</p>
               <p className="truncate text-xs text-slate-400">{PUBLIC_CHAT_PEER.ipAddress}</p>
             </div>
+            {publicUnreadCount > 0 && <UnreadBadge count={publicUnreadCount} />}
           </button>
 
           {peers.length === 0 ? (
@@ -411,26 +489,30 @@ export default function App() {
               No peers found on network
             </div>
           ) : (
-            peers.map(peer => (
-              <button
-                key={peer.peerId}
-                onClick={() => setActivePeer(peer)}
-                className={cn(
-                  "w-full rounded-2xl border p-3 text-left transition-all duration-300",
-                  activePeer?.peerId === peer.peerId
-                    ? "border-cyan-300/35 bg-gradient-to-r from-cyan-300/15 to-indigo-400/15 shadow-lg shadow-cyan-500/10"
-                    : "border-transparent bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.06]"
-                )}
-              >
-                <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white/10 text-lg">
-                  {peer.avatar || '👤'}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="truncate font-medium text-slate-100">{peer.deviceName}</p>
-                  <p className="truncate text-xs text-slate-400">{peer.ipAddress}</p>
-                </div>
-              </button>
-            ))
+            peers.map(peer => {
+              const unreadCount = getUnreadCount(peer);
+              return (
+                <button
+                  key={peer.peerId}
+                  onClick={() => handleOpenPeer(peer)}
+                  className={cn(
+                    "w-full rounded-2xl border p-3 text-left transition-all duration-300 flex items-center gap-3",
+                    activePeer?.peerId === peer.peerId
+                      ? "border-cyan-300/35 bg-gradient-to-r from-cyan-300/15 to-indigo-400/15 shadow-lg shadow-cyan-500/10"
+                      : "border-transparent bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.06]"
+                  )}
+                >
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white/10 text-lg">
+                    {peer.avatar || '👤'}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className="truncate font-medium text-slate-100">{peer.deviceName}</p>
+                    <p className="truncate text-xs text-slate-400">{peer.ipAddress}</p>
+                  </div>
+                  {unreadCount > 0 && <UnreadBadge count={unreadCount} />}
+                </button>
+              );
+            })
           )}
         </div>
       </aside>
@@ -611,6 +693,16 @@ export default function App() {
       </main>
       </div>
     </div>
+  );
+}
+
+function UnreadBadge({ count }: { count: number }) {
+  const displayValue = count > 99 ? '99+' : String(count);
+
+  return (
+    <span className="min-w-6 rounded-full bg-rose-500 px-2 py-0.5 text-center text-[11px] font-semibold text-white shadow-lg shadow-rose-600/40">
+      {displayValue}
+    </span>
   );
 }
 

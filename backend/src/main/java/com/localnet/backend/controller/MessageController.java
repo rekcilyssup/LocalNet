@@ -41,6 +41,15 @@ public class MessageController {
         return localNetService.getPublicMessages(viewerPeerId);
     }
 
+    @GetMapping("/unread-counts")
+    public Map<String, Integer> getUnreadCounts(@RequestParam String viewerPeerId) {
+        try {
+            return localNetService.getUnreadCounts(viewerPeerId);
+        } catch (IllegalArgumentException exception) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
+        }
+    }
+
     @PostMapping("/send")
     public Map<String, Object> sendMessage(@RequestBody SendMessageRequest request) {
         try {

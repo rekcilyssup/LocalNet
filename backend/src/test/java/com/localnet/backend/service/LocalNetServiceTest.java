@@ -12,9 +12,11 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -110,5 +112,53 @@ class LocalNetServiceTest {
         assertEquals("secret.txt", storedFile.originalName());
         assertTrue(storedFile.path().startsWith(tempDir.toAbsolutePath().normalize()));
         assertTrue(Files.exists(storedFile.path()));
+    }
+
+    @Test
+    void unreadCountsAreTrackedAndClearedWhenConversationIsViewed() {
+        Peer alice = service.registerPeer("Alice", "😀", "192.168.1.10");
+        Peer bob = service.registerPeer("Bob", "😎", "192.168.1.11");
+
+        service.sendMessage(new SendMessageRequest(
+                bob.peerId(),
+                alice.peerId(),
+                null,
+                "hi alice",
+                60L,
+                null,
+                null
+        ));
+
+        Map<String, Integer> unreadBeforeRead = service.getUnreadCounts(alice.peerId());
+        assertEquals(1, unreadBeforeRead.getOrDefault(bob.peerId(), 0));
+
+        service.getMessages(alice.peerId(), bob.peerId());
+
+        Map<String, Integer> unreadAfterRead = service.getUnreadCounts(alice.peerId());
+        assertFalse(unreadAfterRead.containsKey(bob.peerId()));
+    }
+
+    @Test
+    void publicUnreadCountsAreTrackedAndClearedWhenPublicChatIsViewed() {
+        Peer alice = service.registerPeer("Alice", "😀", "192.168.1.10");
+        Peer bob = service.registerPeer("Bob", "😎", "192.168.1.11");
+
+        service.sendMessage(new SendMessageRequest(
+                bob.peerId(),
+                null,
+                null,
+                "hello everyone",
+                60L,
+                null,
+                null
+        ));
+
+        Map<String, Integer> unreadBeforeRead = service.getUnreadCounts(alice.peerId());
+        assertEquals(1, unreadBeforeRead.getOrDefault("public_room", 0));
+
+        service.getPublicMessages(alice.peerId());
+
+        Map<String, Integer> unreadAfterRead = service.getUnreadCounts(alice.peerId());
+        assertFalse(unreadAfterRead.containsKey("public_room"));
     }
 }
