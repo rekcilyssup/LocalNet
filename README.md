@@ -37,8 +37,13 @@ The backend exposes the same API surface the UI expects:
 - `POST /api/files/upload`
 - `GET /api/files/download/{id}`
 
+Realtime updates are delivered over:
+
+- `WS /ws`
+
 ## Notes
 
 - Uploaded files are stored under `backend/storage/uploads`.
 - Message state is currently in-memory, so restarting the Spring Boot app clears peers and messages.
+- The frontend prefers WebSocket updates and automatically falls back to polling if `/ws` is unavailable.
 - The old Node mock server is still available with `npm run dev:mock` if you need the previous preview flow.

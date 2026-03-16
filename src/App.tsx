@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Send, Paperclip, User, X, File as FileIcon, Download, Trash2, Clock, MonitorSmartphone, Timer } from 'lucide-react';
 import { cn } from './lib/utils';
@@ -32,6 +32,34 @@ const PUBLIC_CHAT_PEER: Peer = {
   isPublic: true
 };
 
+const PEER_POLL_INTERVAL_MS = 5000;
+const MESSAGE_POLL_INTERVAL_MS = 2000;
+const WS_RECONNECT_DELAY_MS = 2000;
+
+const getMessagesEndpoint = (peer: Peer, viewerPeerId: string) =>
+  peer.isPublic
+    ? `/api/messages/public?viewerPeerId=${encodeURIComponent(viewerPeerId)}`
+    : `/api/messages/${encodeURIComponent(peer.peerId)}?viewerPeerId=${encodeURIComponent(viewerPeerId)}`;
+
+const getWebSocketEndpoint = () => {
+  const envBase = import.meta.env.VITE_API_BASE_URL;
+  if (envBase) {
+    try {
+      const wsUrl = new URL(envBase);
+      wsUrl.protocol = wsUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+      wsUrl.pathname = '/ws';
+      wsUrl.search = '';
+      wsUrl.hash = '';
+      return wsUrl.toString();
+    } catch (error) {
+      console.error('Invalid VITE_API_BASE_URL for websocket connection', error);
+    }
+  }
+
+  const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${protocol}//${window.location.host}/ws`;
+};
+
 export default function App() {
   const [myDevice, setMyDevice] = useState<Peer | null>(null);
   const [peers, setPeers] = useState<Peer[]>([]);
@@ -42,51 +70,188 @@ export default function App() {
   const [ttlSeconds, setTtlSeconds] = useState(60);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const activePeerRef = useRef<Peer | null>(null);
+  const myDeviceRef = useRef<Peer | null>(null);
 
-  const getMessagesEndpoint = (peer: Peer, viewerPeerId: string) =>
-    peer.isPublic
-      ? `/api/messages/public?viewerPeerId=${encodeURIComponent(viewerPeerId)}`
-      : `/api/messages/${encodeURIComponent(peer.peerId)}?viewerPeerId=${encodeURIComponent(viewerPeerId)}`;
-
-  // Polling for peers
   useEffect(() => {
-    if (!myDevice) return;
-    const fetchPeers = async () => {
-      try {
-        const res = await fetch('/api/peers');
-        if (!res.ok) {
-          throw new Error(`Failed to fetch peers (${res.status})`);
-        }
-        const data = await res.json();
-        setPeers(data.filter((p: Peer) => p.peerId !== myDevice.peerId));
-      } catch (e) {
-        console.error("Failed to fetch peers", e);
-      }
-    };
-    fetchPeers();
-    const interval = setInterval(fetchPeers, 5000);
-    return () => clearInterval(interval);
+    activePeerRef.current = activePeer;
+  }, [activePeer]);
+
+  useEffect(() => {
+    myDeviceRef.current = myDevice;
   }, [myDevice]);
 
-  // Polling for messages
+  const fetchPeers = useCallback(async () => {
+    const currentDevice = myDeviceRef.current;
+    if (!currentDevice) {
+      return;
+    }
+
+    try {
+      const res = await fetch('/api/peers');
+      if (!res.ok) {
+        throw new Error(`Failed to fetch peers (${res.status})`);
+      }
+      const data = await res.json();
+      setPeers(data.filter((p: Peer) => p.peerId !== currentDevice.peerId));
+    } catch (e) {
+      console.error('Failed to fetch peers', e);
+    }
+  }, []);
+
+  const fetchMessages = useCallback(async () => {
+    const currentDevice = myDeviceRef.current;
+    const currentPeer = activePeerRef.current;
+    if (!currentDevice || !currentPeer) {
+      return;
+    }
+
+    try {
+      const res = await fetch(getMessagesEndpoint(currentPeer, currentDevice.peerId));
+      if (!res.ok) {
+        throw new Error(`Failed to fetch messages (${res.status})`);
+      }
+      const data = await res.json();
+      setMessages(data);
+    } catch (e) {
+      console.error('Failed to fetch messages', e);
+    }
+  }, []);
+
   useEffect(() => {
-    if (!activePeer || !myDevice) return;
-    const fetchMessages = async () => {
-      try {
-        const res = await fetch(getMessagesEndpoint(activePeer, myDevice.peerId));
-        if (!res.ok) {
-          throw new Error(`Failed to fetch messages (${res.status})`);
-        }
-        const data = await res.json();
-        setMessages(data);
-      } catch (e) {
-        console.error("Failed to fetch messages", e);
+    if (!myDevice) {
+      return;
+    }
+    void fetchPeers();
+  }, [myDevice, fetchPeers]);
+
+  useEffect(() => {
+    if (!myDevice || !activePeer) {
+      setMessages([]);
+      return;
+    }
+    void fetchMessages();
+  }, [activePeer, myDevice, fetchMessages]);
+
+  useEffect(() => {
+    if (!myDevice) {
+      return;
+    }
+
+    let socket: WebSocket | null = null;
+    let peerPollInterval: ReturnType<typeof setInterval> | null = null;
+    let messagePollInterval: ReturnType<typeof setInterval> | null = null;
+    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null;
+    let disposed = false;
+
+    const startPollingFallback = () => {
+      if (!peerPollInterval) {
+        peerPollInterval = setInterval(() => {
+          void fetchPeers();
+        }, PEER_POLL_INTERVAL_MS);
+      }
+      if (!messagePollInterval) {
+        messagePollInterval = setInterval(() => {
+          void fetchMessages();
+        }, MESSAGE_POLL_INTERVAL_MS);
       }
     };
-    fetchMessages();
-    const interval = setInterval(fetchMessages, 2000);
-    return () => clearInterval(interval);
-  }, [activePeer, myDevice]);
+
+    const stopPollingFallback = () => {
+      if (peerPollInterval) {
+        clearInterval(peerPollInterval);
+        peerPollInterval = null;
+      }
+      if (messagePollInterval) {
+        clearInterval(messagePollInterval);
+        messagePollInterval = null;
+      }
+    };
+
+    const scheduleReconnect = () => {
+      if (disposed || reconnectTimeout) {
+        return;
+      }
+      reconnectTimeout = setTimeout(() => {
+        reconnectTimeout = null;
+        connect();
+      }, WS_RECONNECT_DELAY_MS);
+    };
+
+    const handleRealtimeEvent = (rawData: string) => {
+      try {
+        const event = JSON.parse(rawData) as { type?: string };
+        if (event.type === 'peer.updated') {
+          void fetchPeers();
+          return;
+        }
+        if (event.type === 'message.updated') {
+          void fetchMessages();
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to parse websocket event', error);
+      }
+
+      void fetchPeers();
+      void fetchMessages();
+    };
+
+    const connect = () => {
+      if (disposed) {
+        return;
+      }
+
+      startPollingFallback();
+      try {
+        socket = new WebSocket(getWebSocketEndpoint());
+      } catch (error) {
+        console.error('Failed to create websocket connection', error);
+        scheduleReconnect();
+        return;
+      }
+
+      socket.onopen = () => {
+        stopPollingFallback();
+        void fetchPeers();
+        void fetchMessages();
+      };
+
+      socket.onmessage = (event) => {
+        if (typeof event.data === 'string') {
+          handleRealtimeEvent(event.data);
+          return;
+        }
+        void fetchPeers();
+        void fetchMessages();
+      };
+
+      socket.onerror = () => {
+        // Let onclose handle fallback and reconnection.
+      };
+
+      socket.onclose = () => {
+        if (disposed) {
+          return;
+        }
+        startPollingFallback();
+        scheduleReconnect();
+      };
+    };
+
+    connect();
+
+    return () => {
+      disposed = true;
+      stopPollingFallback();
+      if (reconnectTimeout) {
+        clearTimeout(reconnectTimeout);
+      }
+      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+        socket.close();
+      }
+    };
+  }, [myDevice, fetchPeers, fetchMessages]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });

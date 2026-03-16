@@ -23,6 +23,11 @@ export default defineConfig(({mode}) => {
           target: apiBaseUrl,
           changeOrigin: true,
         },
+        '/ws': {
+          target: apiBaseUrl,
+          changeOrigin: true,
+          ws: true,
+        },
       },
     },
   };
