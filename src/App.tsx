@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Send, Paperclip, User, X, File as FileIcon, Download, Trash2, Clock, MonitorSmartphone, Timer } from 'lucide-react';
+import { Send, Paperclip, User, X, File as FileIcon, Download, Trash2, Clock, MonitorSmartphone, Timer, ChevronDown, Reply, Forward } from 'lucide-react';
 import { cn } from './lib/utils';
 
 type Peer = {
@@ -36,6 +36,10 @@ const PEER_POLL_INTERVAL_MS = 5000;
 const MESSAGE_POLL_INTERVAL_MS = 2000;
 const WS_RECONNECT_DELAY_MS = 2000;
 
+const REPLY_PREFIX = '[[REPLY|';
+const FWD_PREFIX = '[[FWD|';
+const META_SUFFIX = ']]';
+
 const getUnreadKeyForPeer = (peer: Peer) => (peer.isPublic ? PUBLIC_CHAT_PEER.peerId : peer.peerId);
 
 const getMessagesEndpoint = (peer: Peer, viewerPeerId: string) =>
@@ -65,6 +69,20 @@ const getWebSocketEndpoint = () => {
   return `${protocol}//${window.location.host}/ws`;
 };
 
+const sanitizeMeta = (value: string) => value.replace(/[\]|\[|\n|\r]/g, ' ').trim();
+
+const buildReplyPayload = (sender: string, quote: string, body: string) => {
+  const safeSender = sanitizeMeta(sender);
+  const safeQuote = sanitizeMeta(quote);
+  return `${REPLY_PREFIX}${safeSender}|${safeQuote}${META_SUFFIX}\n${body}`;
+};
+
+const buildForwardPayload = (sender: string, originalText: string) => {
+  const safeSender = sanitizeMeta(sender);
+  const safeOriginalText = sanitizeMeta(originalText);
+  return `${FWD_PREFIX}${safeSender}|${safeOriginalText}${META_SUFFIX}`;
+};
+
 export default function App() {
   const [myDevice, setMyDevice] = useState<Peer | null>(null);
   const [peers, setPeers] = useState<Peer[]>([]);
@@ -74,7 +92,10 @@ export default function App() {
   const [inputText, setInputText] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [ttlSeconds, setTtlSeconds] = useState(60);
+  const [replyTo, setReplyTo] = useState<Message | null>(null);
+  const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const activePeerRef = useRef<Peer | null>(null);
   const myDeviceRef = useRef<Peer | null>(null);
@@ -379,7 +400,13 @@ export default function App() {
           senderPeerId: myDevice.peerId,
           targetPeerId: activePeer.isPublic ? undefined : activePeer.peerId,
           targetIp: activePeer.isPublic ? undefined : activePeer.ipAddress,
-          text: inputText,
+          text: replyTo
+            ? buildReplyPayload(
+                replyTo.isMine ? myDevice.deviceName : (replyTo.senderDeviceName ?? 'Unknown'),
+                parseMessage(replyTo.text ?? '').body.slice(0, 120),
+                inputText
+              )
+            : inputText,
           ttlSeconds,
           fileId,
           fileName
@@ -391,6 +418,7 @@ export default function App() {
 
       setInputText('');
       setSelectedFile(null);
+      setReplyTo(null);
       
       // Optimistic fetch
       const res = await fetch(getMessagesEndpoint(activePeer, myDevice.peerId));
@@ -422,7 +450,40 @@ export default function App() {
     setMessages(prev => prev.filter(m => m.messageId !== id));
   };
 
+  const handleForwardMessage = async (msg: Message, targetPeer: Peer) => {
+    if (!myDevice) return;
+    const parsed = parseMessage(msg.text ?? '');
+    const originalSender =
+      parsed.type === 'forward'
+        ? parsed.originalSender
+        : (msg.isMine ? myDevice.deviceName : (msg.senderDeviceName ?? 'Unknown'));
+    const candidateText = parsed.type === 'forward' ? parsed.originalText : parsed.body;
+    const originalText = (candidateText.trim() || (msg.fileName ? `File: ${msg.fileName}` : 'Forwarded message')).slice(0, 120);
+    try {
+      const sendRes = await fetch('/api/messages/send', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          senderPeerId: myDevice.peerId,
+          targetPeerId: targetPeer.isPublic ? undefined : targetPeer.peerId,
+          targetIp: targetPeer.isPublic ? undefined : targetPeer.ipAddress,
+          text: buildForwardPayload(originalSender, originalText),
+          ttlSeconds,
+        })
+      });
+      if (!sendRes.ok) throw new Error(`Failed to forward (${sendRes.status})`);
+      setForwardMsg(null);
+      if (activePeer && (targetPeer.peerId === activePeer.peerId || (targetPeer.isPublic && activePeer.isPublic))) {
+        void fetchMessages();
+      }
+      void fetchUnreadCounts();
+    } catch (e) {
+      console.error('Failed to forward message', e);
+    }
+  };
+
   const handleOpenPeer = (peer: Peer) => {
+    setReplyTo(null);
     setActivePeer(peer);
     const unreadKey = getUnreadKeyForPeer(peer);
     setUnreadCounts((prev) => {
@@ -443,14 +504,12 @@ export default function App() {
   }
 
   return (
-    <div className="premium-shell relative h-[100dvh] overflow-hidden p-3 md:p-5 text-zinc-50">
-      <div className="pointer-events-none absolute -left-28 top-16 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
-      <div className="pointer-events-none absolute -right-24 bottom-12 h-80 w-80 rounded-full bg-indigo-500/25 blur-3xl" />
-      <div className="relative z-10 flex h-full flex-col gap-3 md:flex-row">
+    <div className="flex h-[100dvh] overflow-hidden p-3 md:p-4 text-slate-100">
+      <div className="flex h-full w-full flex-col gap-3 md:flex-row">
       {/* Sidebar */}
-      <aside className="flex w-full shrink-0 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/55 shadow-2xl shadow-black/45 backdrop-blur-xl md:w-80">
-        <div className="flex items-center gap-3 border-b border-white/10 bg-white/[0.03] px-5 py-4">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-cyan-300/25 via-indigo-400/20 to-indigo-600/30 text-xl shadow-inner shadow-cyan-100/10">
+      <aside className="flex w-full shrink-0 flex-col overflow-hidden rounded-2xl border border-slate-700/50 bg-[#161b22] md:w-72">
+        <div className="flex items-center gap-3 border-b border-slate-700/50 bg-[#1c2128] px-5 py-4">
+          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-slate-700 text-xl">
             {myDevice.avatar}
           </div>
           <div>
@@ -469,11 +528,11 @@ export default function App() {
             className={cn(
               "w-full rounded-2xl border p-3 text-left transition-all duration-300 flex items-center gap-3",
               activePeer?.isPublic
-                ? "border-cyan-300/35 bg-gradient-to-r from-cyan-300/20 to-indigo-400/15 shadow-lg shadow-cyan-500/10"
-                : "border-transparent bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.06]"
+                ? "border-emerald-500/40 bg-emerald-500/10"
+                : "border-transparent hover:bg-slate-700/50"
             )}
           >
-            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white/10 text-lg">
+            <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-slate-700 text-lg">
               {PUBLIC_CHAT_PEER.avatar}
             </div>
             <div className="flex-1 min-w-0">
@@ -498,11 +557,11 @@ export default function App() {
                   className={cn(
                     "w-full rounded-2xl border p-3 text-left transition-all duration-300 flex items-center gap-3",
                     activePeer?.peerId === peer.peerId
-                      ? "border-cyan-300/35 bg-gradient-to-r from-cyan-300/15 to-indigo-400/15 shadow-lg shadow-cyan-500/10"
-                      : "border-transparent bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.06]"
+                      ? "border-emerald-500/40 bg-emerald-500/10"
+                      : "border-transparent hover:bg-slate-700/50"
                   )}
                 >
-                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-white/10 text-lg">
+                  <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-slate-700 text-lg">
                     {peer.avatar || '👤'}
                   </div>
                   <div className="flex-1 min-w-0">
@@ -518,12 +577,12 @@ export default function App() {
       </aside>
 
       {/* Main Chat Area */}
-      <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-[28px] border border-white/10 bg-slate-950/45 shadow-2xl shadow-black/45 backdrop-blur-xl">
+      <main className="flex min-w-0 flex-1 flex-col overflow-hidden rounded-2xl border border-slate-700/50 bg-[#0d1117]">
         {activePeer ? (
           <>
-            <header className="z-10 flex items-center justify-between border-b border-white/10 bg-white/[0.03] px-5 py-4 md:px-6">
+            <header className="z-10 flex items-center justify-between border-b border-slate-700/50 bg-[#161b22] px-5 py-4 md:px-6">
               <div className="flex items-center gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-white/10 text-xl">
+                <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-700 text-xl">
                   {activePeer.avatar || '👤'}
                 </div>
                 <div>
@@ -532,25 +591,13 @@ export default function App() {
                 </div>
               </div>
               
-              <div className="flex items-center gap-2 rounded-xl border border-white/15 bg-white/[0.05] p-1">
-                <Timer className="ml-2 h-4 w-4 text-slate-300" />
-                <select 
-                  value={ttlSeconds}
-                  onChange={(e) => setTtlSeconds(Number(e.target.value))}
-                  className="cursor-pointer border-none bg-transparent py-1 pr-8 text-sm text-slate-100 focus:ring-0"
-                >
-                  <option value={10}>10 seconds</option>
-                  <option value={60}>1 minute</option>
-                  <option value={300}>5 minutes</option>
-                  <option value={3600}>1 hour</option>
-                </select>
-              </div>
+              <TtlSelect value={ttlSeconds} onChange={setTtlSeconds} />
             </header>
 
             <div className="flex-1 space-y-6 overflow-y-auto p-5 md:p-6">
               {messages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center space-y-4 text-slate-400">
-                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-white/[0.06]">
+                  <div className="flex h-16 w-16 items-center justify-center rounded-2xl bg-slate-800">
                     <Send className="h-8 w-8 opacity-60" />
                   </div>
                   <p className="text-center text-sm md:text-base">
@@ -568,32 +615,24 @@ export default function App() {
                     animate={{ opacity: 1, y: 0, scale: 1 }}
                     exit={{ opacity: 0, scale: 0.9 }}
                     key={msg.messageId}
-                    className={cn("flex max-w-[90%] flex-col gap-1 md:max-w-[78%]", msg.isMine ? "ml-auto items-end" : "items-start")}
+                    className={cn("group flex max-w-[90%] flex-col gap-1 md:max-w-[78%]", msg.isMine ? "ml-auto items-end" : "items-start")}
                   >
-                    <div className="flex items-center gap-2 px-1">
-                      <Countdown expiresAt={msg.expiresAt} onExpire={() => handleExpire(msg.messageId)} />
-                      {msg.isMine && (
-                        <button onClick={() => handleDeleteMessage(msg.messageId)} className="text-slate-500 transition-colors hover:text-rose-300">
-                          <Trash2 className="w-3 h-3" />
-                        </button>
-                      )}
-                    </div>
                     <div className={cn("flex items-end gap-2", msg.isMine && "flex-row-reverse")}>
                       {showPublicSender && (
-                        <div className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-white/25 bg-white/10 text-sm shadow-lg shadow-black/20">
+                        <div className="mb-1 flex h-8 w-8 shrink-0 items-center justify-center rounded-full border border-slate-600 bg-slate-700 text-sm">
                           {msg.senderAvatar || '👤'}
                         </div>
                       )}
                       <div className={cn(
-                        "rounded-2xl border px-4 py-3 shadow-sm backdrop-blur",
+                        "rounded-2xl border px-4 py-3",
                         msg.isMine
-                          ? "rounded-tr-sm border-cyan-200/25 bg-gradient-to-br from-cyan-400/85 to-indigo-500/85 text-white"
-                          : "rounded-tl-sm border-white/15 bg-white/[0.07] text-slate-100"
+                          ? "rounded-tr-sm border-emerald-500/20 bg-emerald-600 text-white"
+                          : "rounded-tl-sm border-slate-600/40 bg-[#21262d] text-slate-100"
                       )}>
                       {activePeer.isPublic && (
                         <p className={cn(
                           "mb-1 text-xs font-medium",
-                          msg.isMine ? "text-cyan-100" : "text-slate-300"
+                          msg.isMine ? "text-emerald-100" : "text-slate-300"
                         )}>
                           {msg.isMine ? 'You' : (msg.senderDeviceName || 'Unknown')}
                         </p>
@@ -607,7 +646,59 @@ export default function App() {
                           </a>
                         </div>
                       )}
-                      {msg.text && <p className="text-[15px] leading-relaxed break-words">{msg.text}</p>}
+                      {(() => {
+                        const parsed = parseMessage(msg.text ?? '');
+                        return (
+                          <>
+                            {parsed.type === 'reply' && parsed.quote && (
+                              <div className={cn(
+                                'mb-2 rounded-lg border-l-2 px-2.5 py-1.5 text-xs',
+                                msg.isMine ? 'border-emerald-300/50 bg-emerald-500/20' : 'border-slate-500 bg-slate-700/50'
+                              )}>
+                                <p className="mb-0.5 font-semibold opacity-80">{parsed.quote.sender}</p>
+                                <p className="line-clamp-2 opacity-70">{parsed.quote.text}</p>
+                              </div>
+                            )}
+                            {parsed.type === 'forward' && (
+                              <div className={cn(
+                                'mb-2 flex items-start gap-1.5 rounded-lg border-l-2 px-2.5 py-1.5 text-xs',
+                                msg.isMine ? 'border-emerald-300/50 bg-emerald-500/20' : 'border-slate-500 bg-slate-700/50'
+                              )}>
+                                <Forward className="mt-0.5 h-3 w-3 shrink-0 opacity-60" />
+                                <div className="min-w-0">
+                                  <p className="font-semibold opacity-80">Forwarded from {parsed.originalSender}</p>
+                                  <p className="line-clamp-2 opacity-70">{parsed.originalText}</p>
+                                </div>
+                              </div>
+                            )}
+                            {parsed.body && <p className="text-[15px] leading-relaxed break-words">{parsed.body}</p>}
+                          </>
+                        );
+                      })()}
+                      </div>
+                    </div>
+                    <div className={cn("mt-1 flex items-center gap-1.5 px-1", msg.isMine ? "justify-end" : "justify-start")}>
+                      <Countdown expiresAt={msg.expiresAt} onExpire={() => handleExpire(msg.messageId)} />
+                      <div className="flex items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100">
+                        <button
+                          onClick={() => { setReplyTo(msg); textareaRef.current?.focus(); }}
+                          className="rounded p-0.5 text-slate-500 transition-colors hover:text-slate-200"
+                          title="Reply"
+                        >
+                          <Reply className="w-3 h-3" />
+                        </button>
+                        <button
+                          onClick={() => setForwardMsg(msg)}
+                          className="rounded p-0.5 text-slate-500 transition-colors hover:text-slate-200"
+                          title="Forward"
+                        >
+                          <Forward className="w-3 h-3" />
+                        </button>
+                        {msg.isMine && (
+                          <button onClick={() => handleDeleteMessage(msg.messageId)} className="rounded p-0.5 text-slate-500 transition-colors hover:text-rose-300" title="Delete">
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </motion.div>
@@ -617,16 +708,40 @@ export default function App() {
               <div ref={messagesEndRef} className="h-1" />
             </div>
 
-            <footer className="z-10 border-t border-white/10 bg-white/[0.03] p-4">
+            <footer className="z-10 border-t border-slate-700/50 bg-[#161b22] p-4">
               <AnimatePresence>
+                {replyTo && (
+                  <motion.div
+                    key="reply-preview"
+                    initial={{ opacity: 0, height: 0, marginBottom: 0 }}
+                    animate={{ opacity: 1, height: 'auto', marginBottom: 8 }}
+                    exit={{ opacity: 0, height: 0, marginBottom: 0 }}
+                    className="flex items-center gap-3 overflow-hidden rounded-xl border-l-2 border-emerald-500 bg-[#21262d] px-3 py-2"
+                  >
+                    <Reply className="h-4 w-4 shrink-0 text-emerald-400" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-medium text-emerald-300">
+                        {replyTo.isMine ? 'You' : (replyTo.senderDeviceName ?? 'Unknown')}
+                      </p>
+                      <p className="truncate text-xs text-slate-400">{parseMessage(replyTo.text ?? '').body.slice(0, 80)}</p>
+                    </div>
+                    <button
+                      onClick={() => setReplyTo(null)}
+                      className="rounded-full p-1 text-slate-400 transition-colors hover:text-slate-200"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </motion.div>
+                )}
                 {selectedFile && (
-                  <motion.div 
+                  <motion.div
+                    key="file-preview"
                     initial={{ opacity: 0, height: 0, marginBottom: 0 }}
                     animate={{ opacity: 1, height: 'auto', marginBottom: 16 }}
                     exit={{ opacity: 0, height: 0, marginBottom: 0 }}
-                    className="flex items-center gap-3 overflow-hidden rounded-xl border border-white/15 bg-white/[0.06] p-3"
+                    className="flex items-center gap-3 overflow-hidden rounded-xl border border-slate-600/50 bg-[#21262d] p-3"
                   >
-                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-cyan-300/20 text-cyan-200">
+                    <div className="flex h-10 w-10 flex-shrink-0 items-center justify-center rounded-lg bg-emerald-500/20 text-emerald-300">
                       <FileIcon className="w-5 h-5" />
                     </div>
                     <div className="flex-1 min-w-0">
@@ -644,11 +759,11 @@ export default function App() {
               </AnimatePresence>
 
               <form onSubmit={handleSendMessage} className="flex items-end gap-2">
-                <div className="flex flex-1 items-end overflow-hidden rounded-2xl border border-white/15 bg-white/[0.05] transition-all focus-within:border-cyan-300/45 focus-within:ring-1 focus-within:ring-cyan-300/30">
+                <div className="flex flex-1 items-end overflow-hidden rounded-xl border border-slate-600/60 bg-[#21262d] transition-all focus-within:border-emerald-500/50 focus-within:ring-1 focus-within:ring-emerald-500/20">
                   <button
                     type="button"
                     onClick={() => fileInputRef.current?.click()}
-                    className="p-3.5 text-slate-400 transition-colors hover:text-cyan-200"
+                    className="p-3.5 text-slate-400 transition-colors hover:text-slate-200"
                   >
                     <Paperclip className="w-5 h-5" />
                   </button>
@@ -659,6 +774,7 @@ export default function App() {
                     className="hidden"
                   />
                   <textarea
+                    ref={textareaRef}
                     value={inputText}
                     onChange={(e) => setInputText(e.target.value)}
                     onKeyDown={(e) => {
@@ -676,12 +792,22 @@ export default function App() {
                 <button
                   type="submit"
                   disabled={!inputText.trim() && !selectedFile}
-                  className="flex-shrink-0 rounded-2xl bg-gradient-to-r from-cyan-400 to-indigo-500 p-4 text-white shadow-lg shadow-cyan-500/30 transition-all hover:from-cyan-300 hover:to-indigo-400 disabled:opacity-50 disabled:hover:from-cyan-400 disabled:hover:to-indigo-500"
+                  className="flex-shrink-0 rounded-xl bg-emerald-600 p-4 text-white transition-all hover:bg-emerald-500 disabled:opacity-40"
                 >
                   <Send className="w-5 h-5" />
                 </button>
               </form>
             </footer>
+            <AnimatePresence>
+              {forwardMsg && (
+                <ForwardModal
+                  msg={forwardMsg}
+                  peers={peers}
+                  onForward={(targetPeer) => { void handleForwardMessage(forwardMsg, targetPeer); }}
+                  onClose={() => setForwardMsg(null)}
+                />
+              )}
+            </AnimatePresence>
           </>
         ) : (
           <div className="flex flex-1 flex-col items-center justify-center p-6 text-center text-slate-400">
@@ -732,29 +858,209 @@ function Countdown({ expiresAt, onExpire }: { expiresAt: number, onExpire: () =>
   );
 }
 
+function parseMessage(text: string):
+  | { type: 'plain'; body: string }
+  | { type: 'reply'; quote: { sender: string; text: string }; body: string }
+  | { type: 'forward'; originalSender: string; originalText: string; body: string } {
+  const safeReply = text.match(/^\[\[REPLY\|([^|\]]*)\|([^\]]*)\]\]\n?([\s\S]*)$/);
+  if (safeReply) {
+    return {
+      type: 'reply',
+      quote: { sender: safeReply[1], text: safeReply[2] },
+      body: safeReply[3] ?? '',
+    };
+  }
+
+  const safeForward = text.match(/^\[\[FWD\|([^|\]]*)\|([^\]]*)\]\]$/);
+  if (safeForward) {
+    return {
+      type: 'forward',
+      originalSender: safeForward[1],
+      originalText: safeForward[2],
+      body: '',
+    };
+  }
+
+  // Backward compatibility for legacy control-char markers.
+  const legacyReply = text.match(/^\u0002REPLY\u001f([^\u001f]*)\u001f([^\u0003]*)\u0003\n?([\s\S]*)$/);
+  if (legacyReply) {
+    return {
+      type: 'reply',
+      quote: { sender: legacyReply[1], text: legacyReply[2] },
+      body: legacyReply[3] ?? '',
+    };
+  }
+
+  const legacyForward = text.match(/^\u0002FWD\u001f([^\u001f]*)\u001f([^\u0003]*)\u0003$/);
+  if (legacyForward) {
+    return {
+      type: 'forward',
+      originalSender: legacyForward[1],
+      originalText: legacyForward[2],
+      body: '',
+    };
+  }
+
+  // Also support data where delimiters were converted to replacement characters.
+  const brokenReply = text.match(/^REPLY\uFFFD([^\uFFFD]*)\uFFFD([^\uFFFD]*)\uFFFD\s*([\s\S]*)$/);
+  if (brokenReply) {
+    return {
+      type: 'reply',
+      quote: { sender: brokenReply[1], text: brokenReply[2] },
+      body: brokenReply[3] ?? '',
+    };
+  }
+
+  const brokenForward = text.match(/^FWD\uFFFD([^\uFFFD]*)\uFFFD([^\uFFFD]*)\uFFFD?$/);
+  if (brokenForward) {
+    return {
+      type: 'forward',
+      originalSender: brokenForward[1],
+      originalText: brokenForward[2],
+      body: '',
+    };
+  }
+
+  return { type: 'plain', body: text.replace(/\uFFFD/g, ' ').trim() };
+}
+
+function ForwardModal({
+  msg,
+  peers,
+  onForward,
+  onClose,
+}: {
+  msg: Message;
+  peers: Peer[];
+  onForward: (targetPeer: Peer) => void;
+  onClose: () => void;
+}) {
+  const allPeers = [PUBLIC_CHAT_PEER, ...peers];
+  const parsed = parseMessage(msg.text ?? '');
+  const previewText =
+    parsed.type === 'forward'
+      ? parsed.originalText
+      : parsed.type === 'reply'
+        ? parsed.body
+        : parsed.body;
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 px-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        exit={{ opacity: 0, scale: 0.95 }}
+        className="w-full max-w-sm rounded-2xl border border-slate-700/50 bg-[#161b22] p-4 shadow-2xl"
+      >
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <Forward className="h-4 w-4 text-slate-400" />
+            <h3 className="font-semibold text-slate-100">Forward to...</h3>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-200">
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="mb-3 rounded-xl border border-slate-700/50 bg-[#0d1117] px-3 py-2">
+          <p className="line-clamp-2 text-xs text-slate-400">"{previewText || '(no text)'}"</p>
+        </div>
+        <div className="max-h-60 space-y-1 overflow-y-auto">
+          {allPeers.map((peer) => (
+            <button
+              key={peer.peerId}
+              onClick={() => onForward(peer)}
+              className="flex w-full items-center gap-3 rounded-xl p-3 transition-colors hover:bg-slate-700/50"
+            >
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-slate-700 text-base">
+                {peer.avatar || '👤'}
+              </div>
+              <div className="min-w-0 flex-1 text-left">
+                <p className="truncate font-medium text-slate-100">{peer.deviceName}</p>
+                <p className="truncate text-xs text-slate-400">{peer.ipAddress}</p>
+              </div>
+            </button>
+          ))}
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
+const TTL_OPTIONS = [
+  { value: 10, label: '10 seconds' },
+  { value: 60, label: '1 minute' },
+  { value: 300, label: '5 minutes' },
+  { value: 3600, label: '1 hour' },
+];
+
+function TtlSelect({ value, onChange }: { value: number; onChange: (v: number) => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = TTL_OPTIONS.find((o) => o.value === value) ?? TTL_OPTIONS[1];
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [open]);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        className="flex items-center gap-2 rounded-lg border border-slate-600/60 bg-[#21262d] px-3 py-1.5 text-sm text-slate-100 transition-colors hover:bg-[#2d333b]"
+      >
+        <Timer className="h-4 w-4 text-slate-400" />
+        <span>{selected.label}</span>
+        <ChevronDown className={cn('h-3.5 w-3.5 text-slate-400 transition-transform', open && 'rotate-180')} />
+      </button>
+      {open && (
+        <div className="absolute right-0 top-full z-50 mt-1 min-w-[130px] overflow-hidden rounded-lg border border-slate-600/60 bg-[#21262d] shadow-xl">
+          {TTL_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              type="button"
+              onClick={() => { onChange(opt.value); setOpen(false); }}
+              className={cn(
+                'w-full px-4 py-2 text-left text-sm transition-colors hover:bg-slate-700',
+                opt.value === value ? 'bg-emerald-600 text-white' : 'text-slate-100'
+              )}
+            >
+              {opt.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function JoinScreen({ onJoin }: { onJoin: (name: string, avatar: string) => void }) {
   const [name, setName] = useState('');
   const [avatar, setAvatar] = useState(AVATARS[0]);
 
   return (
-    <div className="premium-shell relative min-h-[100dvh] p-6 text-zinc-50">
-      <div className="pointer-events-none absolute -left-16 top-10 h-72 w-72 rounded-full bg-cyan-400/20 blur-3xl" />
-      <div className="pointer-events-none absolute -right-20 bottom-0 h-80 w-80 rounded-full bg-indigo-500/25 blur-3xl" />
-      <div className="relative z-10 flex min-h-[100dvh] items-center justify-center">
+    <div className="flex min-h-[100dvh] items-center justify-center p-6 text-slate-100">
       <motion.div 
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         className="w-full max-w-sm space-y-8"
       >
         <div className="text-center space-y-2">
-          <div className="mx-auto flex h-20 w-20 rotate-3 items-center justify-center rounded-3xl bg-gradient-to-br from-cyan-400 to-indigo-500 shadow-lg shadow-cyan-500/25">
+          <div className="mx-auto flex h-20 w-20 items-center justify-center rounded-2xl bg-emerald-600">
             <MonitorSmartphone className="h-10 w-10 text-white" />
           </div>
           <h1 className="mt-6 text-3xl font-bold tracking-tight">LocalNet</h1>
           <p className="text-sm text-slate-300">Peer-to-peer ephemeral sharing</p>
         </div>
 
-        <div className="space-y-6 rounded-3xl border border-white/10 bg-slate-950/55 p-6 shadow-2xl shadow-black/45 backdrop-blur-xl">
+        <div className="space-y-6 rounded-2xl border border-slate-700/50 bg-[#161b22] p-6">
           <div className="space-y-3">
             <label className="ml-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-300">Choose Avatar</label>
             <div className="grid grid-cols-8 gap-2">
@@ -764,7 +1070,7 @@ function JoinScreen({ onJoin }: { onJoin: (name: string, avatar: string) => void
                   onClick={() => setAvatar(a)}
                   className={cn(
                     "rounded-xl p-1 text-2xl transition-all hover:scale-110",
-                    avatar === a ? "scale-110 bg-white/10 ring-2 ring-cyan-300 shadow-md shadow-cyan-500/20" : "opacity-50 hover:opacity-100"
+                    avatar === a ? "scale-110 bg-slate-700 ring-2 ring-emerald-400" : "opacity-50 hover:opacity-100"
                   )}
                 >
                   {a}
@@ -782,7 +1088,7 @@ function JoinScreen({ onJoin }: { onJoin: (name: string, avatar: string) => void
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="e.g. Windows-Host"
-                className="w-full rounded-2xl border border-white/15 bg-white/[0.04] py-4 pl-12 pr-4 text-slate-100 placeholder:text-slate-500 transition-all focus:border-cyan-300/55 focus:outline-none focus:ring-2 focus:ring-cyan-300/35"
+                className="w-full rounded-xl border border-slate-600/60 bg-[#21262d] py-4 pl-12 pr-4 text-slate-100 placeholder:text-slate-500 transition-all focus:border-emerald-500/50 focus:outline-none focus:ring-2 focus:ring-emerald-500/20"
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && name.trim()) {
                     onJoin(name.trim(), avatar);
@@ -795,13 +1101,12 @@ function JoinScreen({ onJoin }: { onJoin: (name: string, avatar: string) => void
           <button
             onClick={() => name.trim() && onJoin(name.trim(), avatar)}
             disabled={!name.trim()}
-            className="w-full rounded-2xl bg-gradient-to-r from-cyan-400 to-indigo-500 py-4 font-semibold text-white shadow-lg shadow-cyan-500/25 transition-all hover:from-cyan-300 hover:to-indigo-400 disabled:opacity-50 disabled:hover:from-cyan-400 disabled:hover:to-indigo-500 active:scale-[0.98]"
+            className="w-full rounded-xl bg-emerald-600 py-4 font-semibold text-white transition-all hover:bg-emerald-500 disabled:opacity-40 active:scale-[0.98]"
           >
             Broadcast Presence
           </button>
         </div>
       </motion.div>
-      </div>
     </div>
   );
 }
