@@ -12,13 +12,16 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class LocalNetServiceTest {
 
@@ -160,5 +163,37 @@ class LocalNetServiceTest {
 
         Map<String, Integer> unreadAfterRead = service.getUnreadCounts(alice.peerId());
         assertFalse(unreadAfterRead.containsKey("public_room"));
+    }
+
+    @Test
+    void heartbeatUpdatesLastSeenAt() throws InterruptedException {
+        Peer peer = service.registerPeer("Device", "😀", "192.168.1.10");
+        long initialLastSeen = peer.lastSeenAt();
+        
+        Thread.sleep(10); // Ensure time passes
+        
+        Peer updated = service.heartbeat(peer.peerId());
+        assertTrue(updated.lastSeenAt() > initialLastSeen);
+        
+        Peer fetched = service.getPeers().stream().filter(p -> p.peerId().equals(peer.peerId())).findFirst().orElseThrow();
+        assertEquals(updated.lastSeenAt(), fetched.lastSeenAt());
+    }
+
+    @Test
+    void removeExpiredPeersRemovesStalePeers() throws InterruptedException {
+        Peer stale = service.registerPeer("Stale", "😀", "192.168.1.10");
+        
+        Thread.sleep(10); // Ensure time passes
+        
+        // Remove peers that haven't sent a heartbeat in the last 5ms
+        List<String> removed = service.removeExpiredPeers(5);
+        
+        assertTrue(removed.contains(stale.peerId()));
+        assertEquals(0, service.getPeers().size());
+    }
+
+    @Test
+    void validateTypingThrowsForUnknownPeer() {
+        assertThrows(IllegalArgumentException.class, () -> service.validateTyping("unknown_peer"));
     }
 }

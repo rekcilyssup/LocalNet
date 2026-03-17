@@ -119,10 +119,33 @@ async function startServer() { // Main async function to bootstrap the server
     const { deviceName, avatar } = req.body; // Extract device name and avatar from request body
     const peerId = "peer_" + Math.random().toString(36).substr(2, 9); // Generate a random peer ID
     const ipAddress = req.ip || "192.168.1." + Math.floor(Math.random() * 255); // Use real IP or generate mock one
-    const newPeer = { peerId, deviceName, ipAddress, avatar }; // Create peer object
+    const newPeer = { peerId, deviceName, ipAddress, avatar, lastSeenAt: Date.now() }; // Create peer object with initial heartbeat
     peers.set(peerId, newPeer); // Store in the peers map
     res.json(newPeer); // Return the new peer as JSON
   });
+
+  app.post("/api/peers/heartbeat", (req, res) => { // POST /api/peers/heartbeat — updates peer last-seen timestamp
+    const { peerId } = req.body;
+    if (!peerId || !peers.has(peerId)) {
+        res.status(404).json({ success: false, message: "Peer not found" });
+        return;
+    }
+    const peer = peers.get(peerId);
+    peer.lastSeenAt = Date.now();
+    peers.set(peerId, peer);
+    res.json(peer);
+  });
+
+  // Run a cleanup interval every 10 seconds to remove peers with no heartbeat in 30s
+  setInterval(() => {
+      const now = Date.now();
+      const cutoff = now - 30000;
+      for (const [peerId, peer] of peers.entries()) {
+          if (peer.lastSeenAt < cutoff) {
+              peers.delete(peerId);
+          }
+      }
+  }, 10000);
 
   app.get("/api/messages/public", (req, res) => { // GET /api/messages/public — fetch public chat messages
     const viewerPeerId = String(req.query.viewerPeerId || ""); // Extract viewer ID from query string
@@ -208,6 +231,12 @@ async function startServer() { // Main async function to bootstrap the server
       conversations.set(key, items.filter((m: any) => m.messageId !== id)); // Remove the message from each conversation
     }
     res.json({ success: true }); // Return success (no ownership check in mock)
+  });
+
+  app.post("/api/messages/typing", (req, res) => { // POST /api/messages/typing — mock typing endpoint
+    // The mock backend doesn't implement WebSockets, so this is just a REST no-op
+    // to prevent the frontend from getting 404 errors when pointing to the mock.
+    res.json({ success: true });
   });
 
   app.post("/api/files/request", (req, res) => { // POST /api/files/request — checks if file transfer is allowed

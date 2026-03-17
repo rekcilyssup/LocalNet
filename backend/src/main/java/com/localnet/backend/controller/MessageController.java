@@ -1,6 +1,7 @@
 package com.localnet.backend.controller;
 
 import com.localnet.backend.model.MessageView; // Client-facing message DTO with resolved sender info
+import com.localnet.backend.model.Peer; // Peer data model
 import com.localnet.backend.model.SendMessageRequest; // DTO for incoming send-message requests
 import com.localnet.backend.service.LocalNetService; // Core business logic service
 import com.localnet.backend.websocket.LocalNetWebSocketHandler; // WebSocket broadcaster for real-time events
@@ -73,6 +74,29 @@ public class MessageController {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, exception.getMessage(), exception); // Return 403
         } catch (NoSuchElementException exception) { // Message ID not found
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, exception.getMessage(), exception); // Return 404
+        }
+    }
+
+    @PostMapping("/typing") // POST /api/messages/typing — broadcasts typing status
+    public Map<String, Boolean> typing(@RequestBody Map<String, String> body) {
+        try {
+            String senderPeerId = body.get("senderPeerId");
+            String targetPeerId = body.get("targetPeerId"); // can be null for public chat
+            
+            // Validate the sender actually exists
+            Peer sender = localNetService.validateTyping(senderPeerId);
+            
+            Map<String, Object> eventData = Map.of(
+                "senderPeerId", senderPeerId,
+                "senderDeviceName", sender.deviceName(),
+                "senderAvatar", sender.avatar(),
+                "targetPeerId", targetPeerId == null ? "public_room" : targetPeerId
+            );
+            
+            localNetWebSocketHandler.broadcast("user.typing", eventData);
+            return Map.of("success", true);
+        } catch (Exception e) {
+            return Map.of("success", false);
         }
     }
 }

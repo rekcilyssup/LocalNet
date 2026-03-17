@@ -50,7 +50,7 @@ public class LocalNetService {
 
     public Peer registerPeer(String deviceName, String avatar, String ipAddress) { // Registers a new peer on the network
         String peerId = "peer_" + UUID.randomUUID().toString().replace("-", "").substring(0, 10); // Generate a short unique peer ID
-        Peer peer = new Peer(peerId, deviceName.trim(), ipAddress, avatar); // Create immutable Peer record
+        Peer peer = new Peer(peerId, deviceName.trim(), ipAddress, avatar, Instant.now().toEpochMilli()); // Create immutable Peer record
         peers.put(peerId, peer); // Store in the peers map
         return peer; // Return the newly created peer
     }
@@ -59,6 +59,45 @@ public class LocalNetService {
         return peers.values().stream()
                 .sorted(Comparator.comparing(Peer::deviceName, String.CASE_INSENSITIVE_ORDER)) // Sort by device name, case-insensitive
                 .toList(); // Collect to immutable list
+    }
+
+    public Peer heartbeat(String peerId) { // Updates the lastSeenAt timestamp for a peer
+        if (!StringUtils.hasText(peerId)) {
+            throw new IllegalArgumentException("peerId is required");
+        }
+        Peer existing = peers.get(peerId);
+        if (existing == null) {
+            throw new IllegalArgumentException("Unknown peerId: " + peerId);
+        }
+        Peer updated = new Peer(existing.peerId(), existing.deviceName(), existing.ipAddress(), existing.avatar(), Instant.now().toEpochMilli());
+        peers.put(peerId, updated);
+        return updated;
+    }
+
+    public Peer validateTyping(String peerId) { // Validates a peer exists before broadcasting typing
+        if (!StringUtils.hasText(peerId)) {
+            throw new IllegalArgumentException("peerId is required");
+        }
+        Peer existing = peers.get(peerId);
+        if (existing == null) {
+            throw new IllegalArgumentException("Unknown peerId: " + peerId);
+        }
+        return existing;
+    }
+
+    public List<String> removeExpiredPeers(long staleThresholdMs) { // Removes peers that haven't sent a heartbeat
+        long cutoffTime = Instant.now().toEpochMilli() - staleThresholdMs;
+        List<String> removedPeerIds = new ArrayList<>();
+        
+        peers.entrySet().removeIf(entry -> {
+            if (entry.getValue().lastSeenAt() < cutoffTime) {
+                removedPeerIds.add(entry.getKey());
+                return true;
+            }
+            return false;
+        });
+        
+        return removedPeerIds;
     }
 
     public List<MessageView> getMessages(String viewerPeerId, String otherPeerId) { // Fetches DM conversation between two peers

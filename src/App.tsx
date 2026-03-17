@@ -94,6 +94,11 @@ export default function App() {
   const [ttlSeconds, setTtlSeconds] = useState(60);
   const [replyTo, setReplyTo] = useState<Message | null>(null);
   const [forwardMsg, setForwardMsg] = useState<Message | null>(null);
+  
+  // Track typing status keyed by peerId -> { deviceName, avatar, timeoutId }
+  const [typingPeers, setTypingPeers] = useState<Record<string, { deviceName: string; avatar: string; timeoutId: ReturnType<typeof setTimeout> }>>({});
+  const typingTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -177,6 +182,17 @@ export default function App() {
     }
     void fetchPeers();
     void fetchUnreadCounts();
+
+    // Heartbeat loop
+    const heartbeatInterval = setInterval(() => {
+      fetch('/api/peers/heartbeat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ peerId: myDevice.peerId })
+      }).catch(err => console.error("Heartbeat failed", err));
+    }, 10000);
+
+    return () => clearInterval(heartbeatInterval);
   }, [myDevice, fetchPeers, fetchUnreadCounts]);
 
   useEffect(() => {
@@ -255,7 +271,7 @@ export default function App() {
 
     const handleRealtimeEvent = (rawData: string) => {
       try {
-        const event = JSON.parse(rawData) as { type?: string };
+        const event = JSON.parse(rawData) as { type?: string; data?: any };
         if (event.type === 'peer.updated') {
           void fetchPeers();
           void fetchUnreadCounts();
@@ -264,6 +280,35 @@ export default function App() {
         if (event.type === 'message.updated') {
           void fetchMessages();
           void fetchUnreadCounts();
+          return;
+        }
+        if (event.type === 'user.typing' && event.data) {
+          const { senderPeerId, senderDeviceName, senderAvatar, targetPeerId } = event.data;
+          
+          // Only show if they're typing in our current view (either to us locally, or in public chat we have open)
+          const currentPeerId = activePeerRef.current?.isPublic ? PUBLIC_CHAT_PEER.peerId : activePeerRef.current?.peerId;
+          const isTypingToCurrentView = targetPeerId === PUBLIC_CHAT_PEER.peerId ? activePeerRef.current?.isPublic : (senderPeerId === currentPeerId);
+          
+          if (isTypingToCurrentView && senderPeerId !== myDeviceRef.current?.peerId) {
+            setTypingPeers(prev => {
+              // Clear previous timeout if it exists
+              if (prev[senderPeerId]?.timeoutId) clearTimeout(prev[senderPeerId].timeoutId);
+              
+              // Set new timeout to clear typing status after 3 seconds
+              const timeoutId = setTimeout(() => {
+                setTypingPeers(current => {
+                  const next = { ...current };
+                  delete next[senderPeerId];
+                  return next;
+                });
+              }, 3000);
+              
+              return {
+                ...prev,
+                [senderPeerId]: { deviceName: senderDeviceName, avatar: senderAvatar, timeoutId }
+              };
+            });
+          }
           return;
         }
       } catch (error) {
@@ -594,6 +639,29 @@ export default function App() {
               <TtlSelect value={ttlSeconds} onChange={setTtlSeconds} />
             </header>
 
+            {/* Typing Indicator Bar */}
+            <AnimatePresence>
+              {Object.keys(typingPeers).length > 0 && (
+                <motion.div
+                  initial={{ opacity: 0, height: 0 }}
+                  animate={{ opacity: 1, height: 'auto' }}
+                  exit={{ opacity: 0, height: 0 }}
+                  className="bg-[#1c2128] border-b border-slate-700/50 px-5 py-2 z-0"
+                >
+                  <div className="flex items-center gap-2 text-xs font-medium text-emerald-400">
+                    <div className="flex gap-1 items-center bg-emerald-500/10 px-2.5 py-1.5 rounded-full border border-emerald-500/20">
+                      <span className="flex gap-0.5 mr-1.5">
+                        <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '0ms' }} />
+                        <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '150ms' }} />
+                        <span className="w-1 h-1 rounded-full bg-emerald-400 animate-bounce" style={{ animationDelay: '300ms' }} />
+                      </span>
+                      {(Object.values(typingPeers) as Array<{ deviceName: string }>).map(p => p.deviceName).join(', ')} {Object.keys(typingPeers).length > 1 ? 'are' : 'is'} typing...
+                    </div>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
+
             <div className="flex-1 space-y-6 overflow-y-auto p-5 md:p-6">
               {messages.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center space-y-4 text-slate-400">
@@ -776,11 +844,34 @@ export default function App() {
                   <textarea
                     ref={textareaRef}
                     value={inputText}
-                    onChange={(e) => setInputText(e.target.value)}
+                    onChange={(e) => {
+                      setInputText(e.target.value);
+                      if (!myDevice || !activePeer) return;
+                      
+                      // Debounce typing broadcast (max once per 2 seconds)
+                      if (!typingTimeoutRef.current) {
+                        fetch('/api/messages/typing', {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({
+                            senderPeerId: myDevice.peerId,
+                            targetPeerId: activePeer.isPublic ? null : activePeer.peerId
+                          })
+                        }).catch(() => {}); // ignore errors silently
+                        
+                        typingTimeoutRef.current = setTimeout(() => {
+                          typingTimeoutRef.current = null;
+                        }, 2000);
+                      }
+                    }}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter' && !e.shiftKey) {
                         e.preventDefault();
                         handleSendMessage();
+                        if (typingTimeoutRef.current) {
+                          clearTimeout(typingTimeoutRef.current);
+                          typingTimeoutRef.current = null;
+                        }
                       }
                     }}
                     placeholder={`Message ${activePeer.deviceName}...`}
