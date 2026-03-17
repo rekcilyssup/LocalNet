@@ -1,78 +1,78 @@
 package com.localnet.backend.controller;
 
-import com.localnet.backend.model.MessageView;
-import com.localnet.backend.model.SendMessageRequest;
-import com.localnet.backend.service.LocalNetService;
-import com.localnet.backend.websocket.LocalNetWebSocketHandler;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.bind.annotation.DeleteMapping;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.PathVariable;
-import org.springframework.web.bind.annotation.PostMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestParam;
-import org.springframework.web.bind.annotation.RestController;
-import org.springframework.web.server.ResponseStatusException;
+import com.localnet.backend.model.MessageView; // Client-facing message DTO with resolved sender info
+import com.localnet.backend.model.SendMessageRequest; // DTO for incoming send-message requests
+import com.localnet.backend.service.LocalNetService; // Core business logic service
+import com.localnet.backend.websocket.LocalNetWebSocketHandler; // WebSocket broadcaster for real-time events
+import org.springframework.http.HttpStatus; // HTTP status code constants
+import org.springframework.web.bind.annotation.DeleteMapping; // Maps HTTP DELETE requests
+import org.springframework.web.bind.annotation.GetMapping; // Maps HTTP GET requests
+import org.springframework.web.bind.annotation.PathVariable; // Binds URL path segments to method params
+import org.springframework.web.bind.annotation.PostMapping; // Maps HTTP POST requests
+import org.springframework.web.bind.annotation.RequestBody; // Binds JSON request body to method params
+import org.springframework.web.bind.annotation.RequestMapping; // Sets base URL path for this controller
+import org.springframework.web.bind.annotation.RequestParam; // Binds query parameters to method params
+import org.springframework.web.bind.annotation.RestController; // Marks class as a REST controller
+import org.springframework.web.server.ResponseStatusException; // Throws HTTP error responses with status codes
 
-import java.util.List;
-import java.util.Map;
-import java.util.NoSuchElementException;
+import java.util.List; // Used for returning lists of messages
+import java.util.Map; // Used for returning JSON key-value responses
+import java.util.NoSuchElementException; // Thrown when a requested message doesn't exist
 
-@RestController
-@RequestMapping("/api/messages")
+@RestController // Marks this as a REST controller returning JSON
+@RequestMapping("/api/messages") // Base URL: /api/messages
 public class MessageController {
 
-    private final LocalNetService localNetService;
-    private final LocalNetWebSocketHandler localNetWebSocketHandler;
+    private final LocalNetService localNetService; // Service handling message storage and logic
+    private final LocalNetWebSocketHandler localNetWebSocketHandler; // Broadcasts real-time events via WebSocket
 
-    public MessageController(LocalNetService localNetService, LocalNetWebSocketHandler localNetWebSocketHandler) {
-        this.localNetService = localNetService;
-        this.localNetWebSocketHandler = localNetWebSocketHandler;
+    public MessageController(LocalNetService localNetService, LocalNetWebSocketHandler localNetWebSocketHandler) { // Constructor injection
+        this.localNetService = localNetService; // Store service reference
+        this.localNetWebSocketHandler = localNetWebSocketHandler; // Store WebSocket handler reference
     }
 
-    @GetMapping("/{peerId}")
-    public List<MessageView> getMessages(@PathVariable String peerId, @RequestParam String viewerPeerId) {
-        return localNetService.getMessages(viewerPeerId, peerId);
+    @GetMapping("/{peerId}") // GET /api/messages/{peerId} — fetches DM conversation with a specific peer
+    public List<MessageView> getMessages(@PathVariable("peerId") String peerId, @RequestParam("viewerPeerId") String viewerPeerId) { // peerId = other peer, viewerPeerId = current user
+        return localNetService.getMessages(viewerPeerId, peerId); // Returns messages with read-tracking side effect
     }
 
-    @GetMapping("/public")
-    public List<MessageView> getPublicMessages(@RequestParam String viewerPeerId) {
-        return localNetService.getPublicMessages(viewerPeerId);
+    @GetMapping("/public") // GET /api/messages/public — fetches all public chat messages
+    public List<MessageView> getPublicMessages(@RequestParam("viewerPeerId") String viewerPeerId) { // viewerPeerId needed for isMine flag
+        return localNetService.getPublicMessages(viewerPeerId); // Returns public messages and marks them as read
     }
 
-    @GetMapping("/unread-counts")
-    public Map<String, Integer> getUnreadCounts(@RequestParam String viewerPeerId) {
+    @GetMapping("/unread-counts") // GET /api/messages/unread-counts — returns unread message counts per conversation
+    public Map<String, Integer> getUnreadCounts(@RequestParam("viewerPeerId") String viewerPeerId) { // viewerPeerId identifies who is asking
         try {
-            return localNetService.getUnreadCounts(viewerPeerId);
-        } catch (IllegalArgumentException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
+            return localNetService.getUnreadCounts(viewerPeerId); // Returns map of peerId/roomId -> unread count
+        } catch (IllegalArgumentException exception) { // Invalid or missing viewerPeerId
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception); // Return 400
         }
     }
 
-    @PostMapping("/send")
-    public Map<String, Object> sendMessage(@RequestBody SendMessageRequest request) {
+    @PostMapping("/send") // POST /api/messages/send — sends a new message (public or direct)
+    public Map<String, Object> sendMessage(@RequestBody SendMessageRequest request) { // Binds JSON body to DTO
         try {
-            String messageId = localNetService.sendMessage(request);
-            localNetWebSocketHandler.broadcast("message.updated", Map.of("messageId", messageId));
-            return Map.of("success", true, "messageId", messageId);
-        } catch (IllegalArgumentException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
+            String messageId = localNetService.sendMessage(request); // Store the message and get its ID
+            localNetWebSocketHandler.broadcast("message.updated", Map.of("messageId", messageId)); // Notify all WS clients of new message
+            return Map.of("success", true, "messageId", messageId); // Return success response with message ID
+        } catch (IllegalArgumentException exception) { // Validation errors (missing sender, no content, etc.)
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception); // Return 400
         }
     }
 
-    @DeleteMapping("/{id}")
-    public Map<String, Boolean> deleteMessage(@PathVariable String id, @RequestParam String requesterPeerId) {
+    @DeleteMapping("/{id}") // DELETE /api/messages/{id} — deletes a specific message by ID
+    public Map<String, Boolean> deleteMessage(@PathVariable("id") String id, @RequestParam("requesterPeerId") String requesterPeerId) { // Only sender can delete
         try {
-            localNetService.deleteMessage(id, requesterPeerId);
-            localNetWebSocketHandler.broadcast("message.updated", Map.of("messageId", id));
-            return Map.of("success", true);
-        } catch (IllegalArgumentException exception) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception);
-        } catch (SecurityException exception) {
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, exception.getMessage(), exception);
-        } catch (NoSuchElementException exception) {
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND, exception.getMessage(), exception);
+            localNetService.deleteMessage(id, requesterPeerId); // Validate ownership and remove the message
+            localNetWebSocketHandler.broadcast("message.updated", Map.of("messageId", id)); // Notify all WS clients of deletion
+            return Map.of("success", true); // Return success response
+        } catch (IllegalArgumentException exception) { // Invalid input parameters
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, exception.getMessage(), exception); // Return 400
+        } catch (SecurityException exception) { // Requester is not the original sender
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, exception.getMessage(), exception); // Return 403
+        } catch (NoSuchElementException exception) { // Message ID not found
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, exception.getMessage(), exception); // Return 404
         }
     }
 }
