@@ -1,7 +1,7 @@
 
 # LocalNet
 
-LocalNet now uses a separated frontend and backend:
+LocalNet now uses a separated frontend and backend::
 
 - React + Vite frontend in the project root.
 - Java Spring Boot backend in [backend](backend).
